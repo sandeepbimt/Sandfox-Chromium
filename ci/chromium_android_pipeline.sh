@@ -374,6 +374,15 @@ HELPER
   cp "${REPO_ROOT}/ci/siso/buildbuddy_backend.star" \
     "${WORKDIR}/src/build/config/siso/backend_config/backend.star"
 
+  # Chromium's autoninja/Siso integration requires .sisoenv to exist before
+  # it will select Siso for a GN output directory. Keep the remote endpoint
+  # explicit here because this mode is intentionally opt-in and the normal
+  # Afterbird pipeline must remain unchanged.
+  cat > "${WORKDIR}/src/build/config/siso/.sisoenv" <<SISOENV
+SISO_REAPI_ADDRESS=${SISO_REAPI_ADDRESS}
+SISO_REAPI_INSTANCE=${SISO_REAPI_INSTANCE}
+SISOENV
+
   log "Siso/BuildBuddy remote execution enabled"
   log "REAPI address: ${SISO_REAPI_ADDRESS}"
   log "REAPI instance: ${SISO_REAPI_INSTANCE}"
