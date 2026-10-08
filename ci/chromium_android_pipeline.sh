@@ -28,6 +28,7 @@ GCLIENT_BACKOFF_SECONDS="${AFTERBIRD_GCLIENT_BACKOFF_SECONDS:-20}"
 GCLIENT_NO_HISTORY="${AFTERBIRD_GCLIENT_NO_HISTORY:-1}"
 GCLIENT_EXTRA_ARGS="${AFTERBIRD_GCLIENT_EXTRA_ARGS:-}"
 FORCE_WORKSPACE_CONFIG="${AFTERBIRD_FORCE_WORKSPACE_CONFIG:-0}"
+REMOTE_EXEC="${AFTERBIRD_REMOTE_EXEC:-0}"
 # 0 disables git's stall detector; googlesource pack preparation can stall >60s.
 GIT_LOW_SPEED_LIMIT="${AFTERBIRD_GIT_LOW_SPEED_LIMIT:-0}"
 GIT_LOW_SPEED_TIME="${AFTERBIRD_GIT_LOW_SPEED_TIME:-300}"
@@ -61,6 +62,8 @@ Environment overrides:
   AFTERBIRD_GCLIENT_NO_HISTORY     Use --no-history during sync (default: 1)
   AFTERBIRD_GCLIENT_EXTRA_ARGS     Extra args appended to gclient sync
   AFTERBIRD_FORCE_WORKSPACE_CONFIG Rewrite existing .gclient/origin URL (default: 0)
+  AFTERBIRD_REMOTE_EXEC             Enable opt-in Siso/BuildBuddy remote execution (default: 0)
+  BUILDBUDDY_API_KEY                Required when AFTERBIRD_REMOTE_EXEC=1
 USAGE
 }
 
@@ -334,12 +337,58 @@ apply_patches() {
   popd >/dev/null
 }
 
+configure_remote_exec() {
+  [[ "${REMOTE_EXEC}" == "0" || "${REMOTE_EXEC}" == "1" ]] || die "AFTERBIRD_REMOTE_EXEC must be '0' or '1'"
+
+  if [[ "${REMOTE_EXEC}" != "1" ]]; then
+    return 0
+  fi
+
+  [[ -n "${BUILDBUDDY_API_KEY:-}" ]] || die "BUILDBUDDY_API_KEY is required when AFTERBIRD_REMOTE_EXEC=1"
+
+  local helper="${WORKDIR}/buildbuddy-credential-helper"
+  cat > "${helper}" <<'HELPER'
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+if len(sys.argv) < 2 or sys.argv[1] != "get":
+    raise SystemExit(1)
+
+sys.stdin.read()
+key = os.environ["BUILDBUDDY_API_KEY"]
+print(json.dumps({
+    "headers": {
+        "x-buildbuddy-api-key": [key],
+    }
+}))
+HELPER
+  chmod 700 "${helper}"
+
+  export SISO_REAPI_ADDRESS="${AFTERBIRD_REAPI_ADDRESS:-remote.buildbuddy.io:443}"
+  export SISO_REAPI_INSTANCE="${AFTERBIRD_REAPI_INSTANCE:-default}"
+  export SISO_CREDENTIAL_HELPER="${helper}"
+
+  mkdir -p "${WORKDIR}/src/build/config/siso/backend_config"
+  cp "${REPO_ROOT}/ci/siso/buildbuddy_backend.star" \
+    "${WORKDIR}/src/build/config/siso/backend_config/backend.star"
+
+  log "Siso/BuildBuddy remote execution enabled"
+  log "REAPI address: ${SISO_REAPI_ADDRESS}"
+  log "REAPI instance: ${SISO_REAPI_INSTANCE}"
+}
+
 run_gn_checks() {
   [[ -f "${REFERENCE_ARGS_FILE}" ]] || die "Missing reference args file: ${REFERENCE_ARGS_FILE}"
 
   local out_path="${WORKDIR}/src/${OUT_DIR}"
   mkdir -p "${out_path}"
   cp "${REFERENCE_ARGS_FILE}" "${out_path}/args.gn"
+
+  if [[ "${REMOTE_EXEC}" == "1" ]]; then
+    printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "${out_path}/args.gn"
+  fi
 
   pushd "${WORKDIR}/src" >/dev/null
   log "Running gn gen ${OUT_DIR}"
@@ -485,6 +534,7 @@ main() {
   clean_source_tree
   apply_overlay
   apply_patches
+  configure_remote_exec
   run_gn_checks
 
   if [[ "${FULL_BUILD}" -eq 1 ]]; then
