@@ -1,0 +1,173 @@
+name: SANDFOX Siso Chromium Compile Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  siso-chromium-compile:
+    name: Siso -> BuildBuddy -> Chromium compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Probe a real Chromium M151 compile action
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          test -n "${BUILDBUDDY_API_KEY}" || {
+            echo "BUILDBUDDY_API_KEY GitHub secret is missing."
+            exit 1
+          }
+
+          python3 - <<'PY' > request.json
+          import json, os, textwrap
+
+          request = {
+              "steps": [{
+                  "run": textwrap.dedent(r'''set -euo pipefail
+
+          echo "=== SANDFOX SISO -> BUILDBUDDY -> CHROMIUM COMPILE PROBE ==="
+
+          DEPOT_TOOLS_DIR="$(mktemp -d)/depot_tools"
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_TOOLS_DIR"
+          export PATH="$DEPOT_TOOLS_DIR:$PATH"
+          export DEPOT_TOOLS_UPDATE=0
+
+          mkdir -p chromium
+          cd chromium
+
+          git init -q
+          git remote add origin https://chromium.googlesource.com/chromium/src.git
+          git -c protocol.version=2 fetch --depth 1 --filter=blob:none origin refs/tags/151.0.7922.38
+          git checkout -q FETCH_HEAD
+
+          git sparse-checkout init --no-cone
+          cat > .git/info/sparse-checkout <<'SPARSE'
+          /base/compiler_specific.h
+          /build/build_config.h
+          /build/buildflag.h
+          /build/buildflag_header_h
+          SPARSE
+          git read-tree -mu HEAD
+
+          echo "Chromium source:"
+          git rev-parse HEAD
+          du -sh .
+
+          command -v clang++
+          clang++ --version | head -n 1
+
+          cat > sandfox_chromium_compile_probe.cc <<'CPP'
+          #include "base/compiler_specific.h"
+
+          ALWAYS_INLINE int SandfoxProbe(int value) {
+            return value + 1;
+          }
+
+          int main() {
+            return SandfoxProbe(41) == 42 ? 0 : 1;
+          }
+          CPP
+
+          mkdir -p build/config/siso
+
+          cat > build/config/siso/main.star <<'STAR'
+          load("@builtin//encoding.star", "json")
+          load("@builtin//struct.star", "module")
+
+          def init(ctx):
+              return module(
+                  "config",
+                  step_config = json.encode({
+                      "platforms": {
+                          "default": {
+                              "OSFamily": "Linux",
+                          },
+                      },
+                      "rules": [
+                          {
+                              "name": "chromium_compile_probe",
+                              "action": "^chromium_compile_probe$",
+                              "remote": True,
+                          },
+                      ],
+                  }),
+                  filegroups = {},
+                  handlers = {},
+              )
+          STAR
+
+          cat > buildbuddy-credential-helper <<'HELPER'
+          #!/usr/bin/env python3
+          import json
+          import os
+          import sys
+
+          if len(sys.argv) < 2 or sys.argv[1] != "get":
+              raise SystemExit(1)
+
+          sys.stdin.read()
+          key = os.environ["BUILDBUDDY_API_KEY"]
+          print(json.dumps({
+              "headers": {
+                  "x-buildbuddy-api-key": [key],
+              }
+          }))
+          HELPER
+          chmod 700 buildbuddy-credential-helper
+
+          cat > build.ninja <<'NINJA'
+          rule chromium_compile_probe
+            command = clang++ -std=c++20 -I. -c sandfox_chromium_compile_probe.cc -o sandfox_chromium_compile_probe.o
+            description = SANDFOX Chromium M151 compile probe
+
+          build chromium_compile_probe: chromium_compile_probe sandfox_chromium_compile_probe.cc base/compiler_specific.h build/build_config.h build/buildflag.h
+          default chromium_compile_probe
+          NINJA
+
+          export SISO_REAPI_ADDRESS="remote.buildbuddy.io:443"
+          export SISO_REAPI_INSTANCE="default"
+          export SISO_CREDENTIAL_HELPER="$PWD/buildbuddy-credential-helper"
+
+          echo "=== SISO NINJA ==="
+          ./../"$DEPOT_TOOLS_DIR"/siso/siso ninja --strict_remote --verbose_failures -C "$PWD" chromium_compile_probe
+
+          test -f sandfox_chromium_compile_probe.o
+          echo "=== SANDFOX REAL CHROMIUM REMOTE COMPILE CONFIRMED ==="
+          ''')
+              }],
+              "env": {
+                  "BUILDBUDDY_API_KEY": os.environ["BUILDBUDDY_API_KEY"]
+              },
+              "timeout": "10m",
+              "wait_until": "COMPLETED"
+          }
+
+          print(json.dumps(request))
+          PY
+
+          echo "Starting BuildBuddy Chromium compile probe..."
+          RESPONSE="$(curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             --data-binary @request.json             https://app.buildbuddy.io/api/v1/Run)"
+
+          echo "Run response:"
+          echo "${RESPONSE}"
+
+          INVOCATION_ID="$(printf '%s' "${RESPONSE}" | jq -r '.invocationId')"
+          test -n "${INVOCATION_ID}" && test "${INVOCATION_ID}" != "null"
+
+          SELECTOR="$(jq -nc --arg id "${INVOCATION_ID}" '{selector:{invocation_id:$id}}')"
+
+          echo "=== INVOCATION STATUS ==="
+          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "${SELECTOR}"             https://app.buildbuddy.io/api/v1/GetInvocation
+
+          echo
+          echo "=== REMOTE CHROMIUM SISO LOG ==="
+          LOG="$(curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "${SELECTOR}"             https://app.buildbuddy.io/api/v1/GetLog)"
+          printf '%s\n' "${LOG}"
+
+          printf '%s\n' "${LOG}" | grep -F "SANDFOX REAL CHROMIUM REMOTE COMPILE CONFIRMED"
+          printf '%s\n' "${LOG}" | grep -E "remote:[1-9]"
