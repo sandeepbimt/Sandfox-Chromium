@@ -1,0 +1,130 @@
+name: SANDFOX Siso BuildBuddy REAPI Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  siso-buildbuddy-reapi:
+    name: Siso -> BuildBuddy REAPI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe Siso through BuildBuddy remote runner
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          test -n "${BUILDBUDDY_API_KEY}" || {
+            echo "BUILDBUDDY_API_KEY GitHub secret is missing."
+            exit 1
+          }
+
+          python3 - <<'PY' > request.json
+          import json, os
+          request = {
+              "steps": [{
+                  "run": r'''set -euo pipefail
+
+          echo "=== SANDFOX SISO -> BUILDBUDDY REAPI PROBE ==="
+
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+          export PATH="$HOME/depot_tools:$PATH"
+          export DEPOT_TOOLS_UPDATE=0
+
+          mkdir -p siso
+          cipd install build/siso/linux-amd64 -root siso
+          ./siso/siso version
+
+          mkdir -p build/config/siso/backend_config
+          cat > build/config/siso/backend_config/backend.star <<'STAR'
+          load("@builtin//struct.star", "module")
+
+          def __platform_properties(ctx):
+              return {
+                  "default": {
+                      "OSFamily": "Linux",
+                      "Arch": "amd64",
+                  },
+              }
+
+          backend = module(
+              "backend",
+              platform_properties = __platform_properties,
+          )
+          STAR
+
+          cat > buildbuddy-credential-helper <<'HELPER'
+          #!/usr/bin/env python3
+          import json
+          import os
+          import sys
+
+          if not sys.argv or len(sys.argv) < 2 or sys.argv[1] != "get":
+              raise SystemExit(1)
+
+          sys.stdin.read()
+          key = os.environ["BUILDBUDDY_API_KEY"]
+          print(json.dumps({
+              "headers": {
+                  "x-buildbuddy-api-key": [key],
+              }
+          }))
+          HELP
+          chmod 700 buildbuddy-credential-helper
+
+          cat > build.ninja <<'NINJA'
+          rule remote_probe
+            command = sh -c 'echo "SANDFOX_REMOTE_ACTION_OK" > remote_probe.txt'
+            description = SANDFOX remote REAPI action
+
+          build remote_probe.txt: remote_probe
+          default remote_probe.txt
+          NINJA
+
+          export SISO_REAPI_ADDRESS="remote.buildbuddy.io:443"
+          export SISO_REAPI_INSTANCE="default"
+          export SISO_CREDENTIAL_HELPER="$PWD/buildbuddy-credential-helper"
+
+          echo "=== SISO ENV ==="
+          echo "SISO_REAPI_ADDRESS=$SISO_REAPI_ADDRESS"
+          echo "SISO_REAPI_INSTANCE=$SISO_REAPI_INSTANCE"
+          echo "SISO_CREDENTIAL_HELPER=$SISO_CREDENTIAL_HELPER"
+
+          echo "=== SISO NINJA ==="
+          ./siso/siso ninja -C "$PWD" remote_probe.txt
+
+          test -f remote_probe.txt
+          grep -Fx "SANDFOX_REMOTE_ACTION_OK" remote_probe.txt
+          echo "=== SANDFOX SISO -> BUILDBUDDY REAPI PROBE COMPLETE ==="
+          '''
+              }],
+              "env": {
+                  "BUILDBUDDY_API_KEY": os.environ["BUILDBUDDY_API_KEY"]
+              },
+              "timeout": "8m",
+              "wait_until": "COMPLETED"
+          }
+          print(json.dumps(request))
+          PY
+
+          echo "Starting BuildBuddy remote Siso probe..."
+          RESPONSE="$(curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             --data-binary @request.json             https://app.buildbuddy.io/api/v1/Run)"
+
+          echo "Run response:"
+          echo "${RESPONSE}"
+
+          INVOCATION_ID="$(printf '%s' "${RESPONSE}" | jq -r '.invocationId')"
+          test -n "${INVOCATION_ID}" && test "${INVOCATION_ID}" != "null"
+
+          SELECTOR="$(jq -nc --arg id "${INVOCATION_ID}" '{selector:{invocation_id:$id}}')"
+
+          echo "=== INVOCATION STATUS ==="
+          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "${SELECTOR}"             https://app.buildbuddy.io/api/v1/GetInvocation
+
+          echo
+          echo "=== REMOTE SISO LOG ==="
+          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "${SELECTOR}"             https://app.buildbuddy.io/api/v1/GetLog
