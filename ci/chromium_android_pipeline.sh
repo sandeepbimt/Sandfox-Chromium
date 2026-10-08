@@ -374,14 +374,14 @@ HELPER
   cp "${REPO_ROOT}/ci/siso/buildbuddy_backend.star" \
     "${WORKDIR}/src/build/config/siso/backend_config/backend.star"
 
-  # Chromium's autoninja/Siso integration requires .sisoenv to exist before
-  # it will select Siso for a GN output directory. Keep the remote endpoint
-  # explicit here because this mode is intentionally opt-in and the normal
-  # Afterbird pipeline must remain unchanged.
-  cat > "${WORKDIR}/src/build/config/siso/.sisoenv" <<SISOENV
-SISO_REAPI_ADDRESS=${SISO_REAPI_ADDRESS}
-SISO_REAPI_INSTANCE=${SISO_REAPI_INSTANCE}
-SISOENV
+  # Use Chromium's configure_siso.py rather than hand-writing .sisoenv.
+  # It is the upstream-supported path for non-Google REAPI backends and also
+  # records the credential helper used by autoninja/Siso.
+  python3 "${WORKDIR}/src/build/config/siso/configure_siso.py" \
+    --reapi_instance "${SISO_REAPI_INSTANCE}" \
+    --reapi_address "${SISO_REAPI_ADDRESS}" \
+    --reapi_backend_config_path "${WORKDIR}/src/build/config/siso/backend_config/backend.star" \
+    --credential-helper "${helper}"
 
   log "Siso/BuildBuddy remote execution enabled"
   log "REAPI address: ${SISO_REAPI_ADDRESS}"
