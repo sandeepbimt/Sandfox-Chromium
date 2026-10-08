@@ -58,6 +58,10 @@ jobs:
           git rev-parse HEAD
           du -sh .
 
+          mkdir -p siso
+          cipd install build/siso/linux-amd64 -root siso
+          ./siso/siso version
+
           command -v clang++
           clang++ --version | head -n 1
 
@@ -134,7 +138,7 @@ jobs:
           export SISO_CREDENTIAL_HELPER="$PWD/buildbuddy-credential-helper"
 
           echo "=== SISO NINJA ==="
-          ./../"$DEPOT_TOOLS_DIR"/siso/siso ninja --strict_remote --verbose_failures -C "$PWD" chromium_compile_probe
+          ./siso/siso ninja --strict_remote --verbose_failures -C "$PWD" chromium_compile_probe
 
           test -f sandfox_chromium_compile_probe.o
           echo "=== SANDFOX REAL CHROMIUM REMOTE COMPILE CONFIRMED ==="
