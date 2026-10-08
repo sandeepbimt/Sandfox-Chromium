@@ -57,6 +57,7 @@ jobs:
                       "rules": [
                           {
                               "name": "remote_probe",
+                              "action": "^remote_probe$",
                               "remote": True,
                           },
                       ],
