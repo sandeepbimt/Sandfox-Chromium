@@ -132,7 +132,7 @@ jobs:
           export SISO_CREDENTIAL_HELPER="$PWD/buildbuddy-credential-helper"
 
           echo "=== SISO NINJA ==="
-          ./siso/siso ninja --strict_remote --verbose_failures -C "$PWD" chromium_compile_probe
+          ./siso/siso ninja --strict_remote --verbose_failures -C "$PWD" sandfox_chromium_compile_probe.o
 
           test -f sandfox_chromium_compile_probe.o
           echo "=== SANDFOX REAL CHROMIUM REMOTE COMPILE CONFIRMED ==="
