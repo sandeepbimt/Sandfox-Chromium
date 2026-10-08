@@ -1,0 +1,43 @@
+name: SANDFOX BuildBuddy Remote Runner Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  buildbuddy-remote-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout SANDFOX
+        uses: actions/checkout@v4
+
+      - name: Install BuildBuddy CLI
+        run: |
+          curl -fsSL https://install.buildbuddy.io | bash
+          bb version
+
+      - name: Probe BuildBuddy remote runner
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          test -n "${BUILDBUDDY_API_KEY}" || {
+            echo "BUILDBUDDY_API_KEY GitHub secret is missing."
+            exit 1
+          }
+
+          bb remote --os=linux --arch=amd64 --script='
+            set -eu
+            echo "=== SANDFOX BUILDBUDDY REMOTE RUNNER ==="
+            echo "CPU:"
+            nproc
+            echo "MEMORY:"
+            free -h
+            echo "DISK:"
+            df -h /
+            echo "OS:"
+            cat /etc/os-release
+            echo "=== REMOTE RUNNER PROBE COMPLETE ==="
+          '
