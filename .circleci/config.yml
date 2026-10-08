@@ -1,0 +1,302 @@
+version: 2.1
+
+jobs:
+  c4-afterbird-buildbuddy-remote:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    steps:
+      - checkout
+
+      - run:
+          name: Measure build VM
+          command: |
+            set -eux
+            echo "=== BUILD VM: DISK ==="
+            df -hT
+            echo "=== BUILD VM: RAM ==="
+            free -h
+            echo "=== BUILD VM: CPU ==="
+            nproc
+            uname -a
+
+      - run:
+          name: Install depot_tools
+          command: |
+            set -eux
+            git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+            "$HOME/depot_tools/ensure_bootstrap"
+            echo 'export PATH="$HOME/depot_tools:$PATH"' >> "$BASH_ENV"
+
+      - run:
+          name: Checkout pinned Chromium source
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+
+            CHROMIUM_TAG="151.0.7922.38"
+            CHROMIUM_URL="https://chromium.googlesource.com/chromium/src.git"
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+
+            mkdir -p "$SRC_DIR"
+            git -C "$SRC_DIR" init
+            git -C "$SRC_DIR" remote add origin "$CHROMIUM_URL"
+
+            git -C "$SRC_DIR" \
+              -c protocol.version=2 \
+              -c http.lowSpeedLimit=0 \
+              -c http.lowSpeedTime=300 \
+              fetch --no-tags --depth=1 origin \
+              "+refs/tags/$CHROMIUM_TAG:refs/tags/$CHROMIUM_TAG"
+
+            git -C "$SRC_DIR" checkout --force --detach "$CHROMIUM_TAG"
+            git -C "$SRC_DIR" describe --tags --exact-match
+
+      - run:
+          name: Prepare Chromium Android dependency sync
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            WORKDIR="$HOME/afterbird-chromium"
+
+            printf '%s\n' \
+              'solutions = [' \
+              '  {' \
+              '    "name": "src",' \
+              '    "url": "https://chromium.googlesource.com/chromium/src.git",' \
+              '    "managed": False,' \
+              '    "custom_deps": {},' \
+              '    "custom_vars": {},' \
+              '  },' \
+              ']' \
+              'target_os = ["android"]' > "$WORKDIR/.gclient"
+
+            cat "$WORKDIR/.gclient"
+
+      - run:
+          name: Sync Chromium Android dependencies
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            export DEPOT_TOOLS_UPDATE=0
+            cd "$HOME/afterbird-chromium"
+            gclient sync -D --no-history --nohooks
+
+      - run:
+          name: Fetch pinned Afterbird delta
+          command: |
+            set -eux
+            AFTERBIRD_DIR="$HOME/afterbird-delta"
+            AFTERBIRD_URL="https://github.com/danosito/afterbird.git"
+            AFTERBIRD_SHA="5ff224f9ef8f8a0792abd2babc9f7164e8dcdb3e"
+
+            mkdir -p "$AFTERBIRD_DIR"
+            git -C "$AFTERBIRD_DIR" init
+            git -C "$AFTERBIRD_DIR" remote add origin "$AFTERBIRD_URL"
+            git -C "$AFTERBIRD_DIR" fetch --depth=1 origin "$AFTERBIRD_SHA"
+            git -C "$AFTERBIRD_DIR" sparse-checkout init --no-cone
+            git -C "$AFTERBIRD_DIR" sparse-checkout set \
+              'patches/m151/*.patch' \
+              'chrome/android/java/res_chromium_base/**' \
+              '.build/args/release.gn'
+            git -C "$AFTERBIRD_DIR" checkout --force --detach "$AFTERBIRD_SHA"
+
+            test "$(git -C "$AFTERBIRD_DIR" rev-parse HEAD)" = "$AFTERBIRD_SHA"
+            test -f "$AFTERBIRD_DIR/.build/args/release.gn"
+            test -d "$AFTERBIRD_DIR/patches/m151"
+            test -d "$AFTERBIRD_DIR/chrome/android/java/res_chromium_base"
+
+            echo "=== AFTERBIRD DELTA ==="
+            git -C "$AFTERBIRD_DIR" rev-parse HEAD
+            du -sh "$AFTERBIRD_DIR"
+
+      - run:
+          name: Install Chromium host build dependencies
+          command: |
+            set -eux
+            export DEBIAN_FRONTEND=noninteractive
+            cd "$HOME/afterbird-chromium/src"
+            ./build/install-build-deps.sh --no-chromeos-fonts
+
+      - run:
+          name: Run Chromium hooks
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            export DEPOT_TOOLS_UPDATE=0
+            cd "$HOME/afterbird-chromium"
+            gclient runhooks
+
+      - run:
+          name: Apply Afterbird Chromium delta
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+
+            cd "$SRC_DIR"
+            git clean -ffd
+
+            AFTERBIRD_DIR="$HOME/afterbird-delta"
+
+            mkdir -p "$SRC_DIR/chrome/android/java/res_chromium_base"
+            cp -a "$AFTERBIRD_DIR/chrome/android/java/res_chromium_base/." \
+              "$SRC_DIR/chrome/android/java/res_chromium_base/"
+
+            for patch in "$AFTERBIRD_DIR"/patches/m151/*.patch; do
+              echo "Applying $patch"
+              git apply --check "$patch"
+              git apply "$patch"
+            done
+
+            git status --short
+
+      - run:
+          name: Configure Siso BuildBuddy remote execution
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            HELPER="$WORKDIR/buildbuddy-credential-helper"
+
+            test -n "${BUILDBUDDY_API_KEY:-}" || {
+              echo "BUILDBUDDY_API_KEY is missing from CircleCI project environment variables."
+              exit 1
+            }
+
+            cat > "$HELPER" <<'HELPER'
+            #!/usr/bin/env python3
+            import json
+            import os
+            import sys
+
+            if len(sys.argv) < 2 or sys.argv[1] != "get":
+                raise SystemExit(1)
+
+            sys.stdin.read()
+            key = os.environ["BUILDBUDDY_API_KEY"]
+            print(json.dumps({
+                "headers": {
+                    "x-buildbuddy-api-key": [key],
+                }
+            }))
+            HELPER
+            chmod 700 "$HELPER"
+
+            export SISO_REAPI_ADDRESS="${AFTERBIRD_REAPI_ADDRESS:-remote.buildbuddy.io:443}"
+            export SISO_REAPI_INSTANCE="${AFTERBIRD_REAPI_INSTANCE:-default}"
+            export SISO_CREDENTIAL_HELPER="$HELPER"
+
+            mkdir -p "$SRC_DIR/build/config/siso/backend_config"
+            cp "$CIRCLE_WORKING_DIRECTORY/ci/siso/buildbuddy_backend.star" \
+              "$SRC_DIR/build/config/siso/backend_config/backend.star"
+
+            python3 "$SRC_DIR/build/config/siso/configure_siso.py" \
+              --reapi_instance "$SISO_REAPI_INSTANCE" \
+              --reapi_address "$SISO_REAPI_ADDRESS" \
+              --reapi_backend_config_path "$SRC_DIR/build/config/siso/backend_config/backend.star" \
+              --credential-helper "$HELPER"
+
+            echo "=== SISO CONFIG ==="
+            grep -E '^(SISO_REAPI_ADDRESS|SISO_REAPI_INSTANCE|SISO_CREDENTIAL_HELPER)=' \
+              "$SRC_DIR/build/config/siso/.sisoenv"
+
+      - run:
+          name: Generate release GN configuration
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+
+            mkdir -p "$OUT_DIR"
+            cp "$HOME/afterbird-delta/.build/args/release.gn" "$OUT_DIR/args.gn"
+            printf '\\nuse_remoteexec = true\\nuse_siso = true\\n' >> "$OUT_DIR/args.gn"
+
+            cd "$SRC_DIR"
+            gn gen "$OUT_DIR"
+
+            echo "=== REMOTE GN ARGS ==="
+            grep -E '^(use_remoteexec|use_siso) = ' "$OUT_DIR/args.gn"
+
+      - run:
+          name: Preflight Chromium Android dependency graph
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            gn desc "$OUT_DIR" //chrome/android:chrome_public_apk deps --all
+
+            echo "=== C3 PRE-FLIGHT PASSED ==="
+            echo "=== DISK ==="
+            df -hT
+            echo "=== RAM ==="
+            free -h
+            echo "=== SOURCE SIZE ==="
+            du -sh "$SRC_DIR"
+            echo "=== WORKSPACE SIZE ==="
+            du -sh "$HOME/afterbird-chromium"
+            echo "=== GN OUTPUT SIZE ==="
+            du -sh "$OUT_DIR"
+            echo "=== GIT SIZE ==="
+            du -sh "$SRC_DIR/.git"
+            echo "=== REVISION ==="
+            git -C "$SRC_DIR" rev-parse HEAD
+            echo "=== TAG ==="
+            git -C "$SRC_DIR" describe --tags --exact-match
+            echo "=== PATCH STATUS ==="
+            git -C "$SRC_DIR" status --short
+
+      - run:
+          name: Build exact Afterbird APK through Siso BuildBuddy
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            LOG_FILE="$CIRCLE_WORKING_DIRECTORY/sandfox-remote-build.log"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            echo "=== REMOTE BUILD PRE-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD PRE-BUILD RAM ==="
+            free -h
+            echo "=== REMOTE BUILD START ==="
+
+            autoninja -C "$OUT_DIR" -j16 chrome_public_apk 2>&1 | tee "$LOG_FILE"
+
+            echo "=== REMOTE BUILD PASSED ==="
+            ls -lh "$OUT_DIR/apks/ChromePublic.apk"
+            echo "=== REMOTE EXECUTION COUNTS ==="
+            grep -E 'noexec:[0-9]+ local:[0-9]+ remote:[0-9]+ cache:[0-9]+ skip:[0-9]+' "$LOG_FILE" || true
+            echo "=== REMOTE BUILD POST-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD POST-BUILD RAM ==="
+            free -h
+
+            mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
+            cp "$OUT_DIR/apks/ChromePublic.apk" \
+              "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
+
+      - store_artifacts:
+          path: afterbird-remote/ChromePublic.apk
+          destination: afterbird-remote/ChromePublic.apk
+
+      - store_artifacts:
+          path: sandfox-remote-build.log
+          destination: afterbird-remote/sandfox-remote-build.log
+
+workflows:
+  c4-afterbird-buildbuddy-remote:
+    jobs:
+      - c4-afterbird-buildbuddy-remote
