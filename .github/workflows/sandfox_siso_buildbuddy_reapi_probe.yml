@@ -105,7 +105,7 @@ jobs:
           echo "SISO_CREDENTIAL_HELPER=$SISO_CREDENTIAL_HELPER"
 
           echo "=== SISO NINJA ==="
-          ./siso/siso ninja -C "$PWD" remote_probe.txt
+          ./siso/siso ninja --strict_remote --verbose_failures -C "$PWD" remote_probe.txt
 
           test -f remote_probe.txt
           grep -Fx "SANDFOX_REMOTE_ACTION_OK" remote_probe.txt
