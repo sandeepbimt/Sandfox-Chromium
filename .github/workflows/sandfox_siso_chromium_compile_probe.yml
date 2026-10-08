@@ -43,16 +43,10 @@ jobs:
           git init -q
           git remote add origin https://chromium.googlesource.com/chromium/src.git
           git -c protocol.version=2 fetch --depth 1 --filter=blob:none origin refs/tags/151.0.7922.38
-          git checkout -q FETCH_HEAD
 
           git sparse-checkout init --no-cone
-          cat > .git/info/sparse-checkout <<'SPARSE'
-          /base/compiler_specific.h
-          /build/build_config.h
-          /build/buildflag.h
-          /build/buildflag_header_h
-          SPARSE
-          git read-tree -mu HEAD
+          git sparse-checkout set --no-cone /base/compiler_specific.h
+          git checkout -q FETCH_HEAD
 
           echo "Chromium source:"
           git rev-parse HEAD
@@ -129,7 +123,7 @@ jobs:
             command = clang++ -std=c++20 -I. -c sandfox_chromium_compile_probe.cc -o sandfox_chromium_compile_probe.o
             description = SANDFOX Chromium M151 compile probe
 
-          build chromium_compile_probe: chromium_compile_probe sandfox_chromium_compile_probe.cc base/compiler_specific.h build/build_config.h build/buildflag.h
+          build chromium_compile_probe: chromium_compile_probe sandfox_chromium_compile_probe.cc base/compiler_specific.h
           default chromium_compile_probe
           NINJA
 
