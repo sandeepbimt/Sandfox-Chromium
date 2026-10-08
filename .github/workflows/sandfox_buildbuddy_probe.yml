@@ -41,9 +41,11 @@ jobs:
 
           echo "Invocation: ${INVOCATION_ID}"
 
+          SELECTOR="$(jq -nc --arg id "${INVOCATION_ID}" '{selector:{invocation_id:$id}}')"
+
           echo "=== INVOCATION STATUS ==="
-          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "{"selector":{"invocation_id":"${INVOCATION_ID}"}}"             https://app.buildbuddy.io/api/v1/GetInvocation
+          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "${SELECTOR}"             https://app.buildbuddy.io/api/v1/GetInvocation
 
           echo
           echo "=== REMOTE LOG ==="
-          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "{"selector":{"invocation_id":"${INVOCATION_ID}"}}"             https://app.buildbuddy.io/api/v1/GetLog
+          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d "${SELECTOR}"             https://app.buildbuddy.io/api/v1/GetLog
