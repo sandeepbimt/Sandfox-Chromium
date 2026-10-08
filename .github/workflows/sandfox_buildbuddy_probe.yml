@@ -11,14 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout SANDFOX
-        uses: actions/checkout@v4
-
-      - name: Install BuildBuddy CLI
-        run: |
-          curl -fsSL https://install.buildbuddy.io | bash
-          bb version
-
       - name: Probe BuildBuddy remote runner
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
@@ -28,16 +20,12 @@ jobs:
             exit 1
           }
 
-          bb remote --os=linux --arch=amd64 --script='
-            set -eu
-            echo "=== SANDFOX BUILDBUDDY REMOTE RUNNER ==="
-            echo "CPU:"
-            nproc
-            echo "MEMORY:"
-            free -h
-            echo "DISK:"
-            df -h /
-            echo "OS:"
-            cat /etc/os-release
-            echo "=== REMOTE RUNNER PROBE COMPLETE ==="
-          '
+          curl --fail-with-body -sS             -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}"             -H "Content-Type: application/json"             -d '{
+              "repo": "https://github.com/sandeepbimt/Sandfox-Chromium.git",
+              "branch": "afterbird",
+              "steps": [
+                {
+                  "run": "set -eu; echo \"=== SANDFOX BUILDBUDDY REMOTE RUNNER ===\"; echo \"CPU:\"; nproc; echo \"MEMORY:\"; free -h; echo \"DISK:\"; df -h /; echo \"OS:\"; cat /etc/os-release; echo \"=== REMOTE RUNNER PROBE COMPLETE ===\""
+                }
+              ]
+            }'             https://app.buildbuddy.io/api/v1/Run
