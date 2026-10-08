@@ -40,22 +40,30 @@ jobs:
           cipd install build/siso/linux-amd64 -root siso
           ./siso/siso version
 
-          mkdir -p build/config/siso/backend_config
-          cat > build/config/siso/backend_config/backend.star <<'STAR'
+          mkdir -p build/config/siso
+          cat > build/config/siso/main.star <<'STAR'
+          load("@builtin//encoding.star", "json")
           load("@builtin//struct.star", "module")
 
-          def __platform_properties(ctx):
-              return {
-                  "default": {
-                      "OSFamily": "Linux",
-                      "Arch": "amd64",
-                  },
-              }
-
-          backend = module(
-              "backend",
-              platform_properties = __platform_properties,
-          )
+          def init(ctx):
+              return module(
+                  "config",
+                  step_config = json.encode({
+                      "platforms": {
+                          "default": {
+                              "OSFamily": "Linux",
+                          },
+                      },
+                      "rules": [
+                          {
+                              "name": "remote_probe",
+                              "remote": True,
+                          },
+                      ],
+                  }),
+                  filegroups = {},
+                  handlers = {},
+              )
           STAR
 
           cat > buildbuddy-credential-helper <<'HELPER'
