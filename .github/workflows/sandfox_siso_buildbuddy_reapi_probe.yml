@@ -73,7 +73,7 @@ jobs:
                   "x-buildbuddy-api-key": [key],
               }
           }))
-          HELP
+          HELPER
           chmod 700 buildbuddy-credential-helper
 
           cat > build.ninja <<'NINJA'
