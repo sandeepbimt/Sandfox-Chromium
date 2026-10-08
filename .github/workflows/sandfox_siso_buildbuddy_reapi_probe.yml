@@ -31,8 +31,9 @@ jobs:
 
           echo "=== SANDFOX SISO -> BUILDBUDDY REAPI PROBE ==="
 
-          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
-          export PATH="$HOME/depot_tools:$PATH"
+          DEPOT_TOOLS_DIR="$(mktemp -d)/depot_tools"
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_TOOLS_DIR"
+          export PATH="$DEPOT_TOOLS_DIR:$PATH"
           export DEPOT_TOOLS_UPDATE=0
 
           mkdir -p siso
