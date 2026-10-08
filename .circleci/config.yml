@@ -216,7 +216,7 @@ jobs:
 
             mkdir -p "$OUT_DIR"
             cp "$HOME/afterbird-delta/.build/args/release.gn" "$OUT_DIR/args.gn"
-            printf '\\nuse_remoteexec = true\\nuse_siso = true\\n' >> "$OUT_DIR/args.gn"
+            printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$OUT_DIR/args.gn"
 
             cd "$SRC_DIR"
             gn gen "$OUT_DIR"
