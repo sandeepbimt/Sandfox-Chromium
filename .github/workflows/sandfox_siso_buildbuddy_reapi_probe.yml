@@ -24,10 +24,10 @@ jobs:
           }
 
           python3 - <<'PY' > request.json
-          import json, os
+          import json, os, textwrap
           request = {
               "steps": [{
-                  "run": r'''set -euo pipefail
+                  "run": textwrap.dedent(r'''set -euo pipefail
 
           echo "=== SANDFOX SISO -> BUILDBUDDY REAPI PROBE ==="
 
@@ -100,7 +100,7 @@ jobs:
           test -f remote_probe.txt
           grep -Fx "SANDFOX_REMOTE_ACTION_OK" remote_probe.txt
           echo "=== SANDFOX SISO -> BUILDBUDDY REAPI PROBE COMPLETE ==="
-          '''
+          ''')
               }],
               "env": {
                   "BUILDBUDDY_API_KEY": os.environ["BUILDBUDDY_API_KEY"]
