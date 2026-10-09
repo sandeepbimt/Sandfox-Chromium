@@ -295,7 +295,8 @@ jobs:
             free -h
             echo "=== REMOTE BUILD START ==="
 
-            autoninja -C "$OUT_DIR" -j16 chrome_public_apk 2>&1 | tee "$LOG_FILE"
+            # Stop before CircleCI's hard 60-minute job limit so failure diagnostics and artifacts can run.
+            timeout --signal=INT --kill-after=30s 36m bash -c 'set -o pipefail; autoninja -C "$1" -j16 chrome_public_apk 2>&1 | tee "$2"' _ "$OUT_DIR" "$LOG_FILE"
 
             echo "=== REMOTE BUILD PASSED ==="
             ls -lh "$OUT_DIR/apks/ChromePublic.apk"
