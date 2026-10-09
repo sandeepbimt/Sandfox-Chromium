@@ -163,7 +163,575 @@ jobs:
             NEW='clang_diagnostic_dir = "clang-crashreports"'
 
             test -f "$FILE"
-            COUNT="$(grep -Fxc "$OLD" "$FILE" || true)"
+            COUNT="$(grep -Ec '^[[:space:]]*clang_diagnostic_dir = rebase_path\("//out/clang-crashreports", root_build_dir\)
+            if [ "$COUNT" != "1" ]; then
+              echo "Expected exactly one pinned Chromium clang_diagnostic_dir definition; found $COUNT"
+              grep -n 'clang_diagnostic_dir' "$FILE" || true
+              exit 1
+            fi
+
+            sed -i "s#clang_diagnostic_dir = rebase_path(\"//out/clang-crashreports\", root_build_dir)#clang_diagnostic_dir = \"clang-crashreports\"#" "$FILE"
+            grep -Eq '^[[:space:]]*clang_diagnostic_dir = "clang-crashreports"
+            if grep -Fq 'rebase_path("//out/clang-crashreports", root_build_dir)' "$FILE"; then
+              echo "Unsafe parent-directory crash path remains"
+              exit 1
+            fi
+
+            echo "=== TARGETED CLANG DIAGNOSTICS PATH FIX ==="
+            git -C "$SRC_DIR" diff -- "$FILE"
+
+      - run:
+          name: Configure Siso BuildBuddy remote execution
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            HELPER="$WORKDIR/buildbuddy-credential-helper"
+
+            test -n "${BUILDBUDDY_API_KEY:-}" || {
+              echo "BUILDBUDDY_API_KEY is missing from CircleCI project environment variables."
+              exit 1
+            }
+
+            printf '%s\n' \
+              '#!/usr/bin/env python3' \
+              'import json' \
+              'import os' \
+              'import sys' \
+              '' \
+              'if len(sys.argv) < 2 or sys.argv[1] != "get":' \
+              '    raise SystemExit(1)' \
+              '' \
+              'sys.stdin.read()' \
+              'key = os.environ["BUILDBUDDY_API_KEY"]' \
+              'print(json.dumps({' \
+              '    "headers": {' \
+              '        "x-buildbuddy-api-key": [key],' \
+              '    }' \
+              '}))' > "$HELPER"
+            chmod 700 "$HELPER"
+
+            export SISO_REAPI_ADDRESS="${AFTERBIRD_REAPI_ADDRESS:-remote.buildbuddy.io:443}"
+            export SISO_REAPI_INSTANCE="${AFTERBIRD_REAPI_INSTANCE:-default}"
+            export SISO_CREDENTIAL_HELPER="$HELPER"
+
+            python3 "$SRC_DIR/build/config/siso/configure_siso.py" \
+              --reapi_instance "$SISO_REAPI_INSTANCE" \
+              --reapi_address "$SISO_REAPI_ADDRESS" \
+              --reapi_backend_config_path "$CIRCLE_WORKING_DIRECTORY/ci/siso/buildbuddy_backend.star" \
+              --credential-helper "$HELPER"
+
+            echo "=== SISO CONFIG ==="
+            grep -E '^(SISO_REAPI_ADDRESS|SISO_REAPI_INSTANCE|SISO_CREDENTIAL_HELPER)=' \
+              "$SRC_DIR/build/config/siso/.sisoenv"
+
+      - run:
+          name: Generate release GN configuration
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+
+            mkdir -p "$OUT_DIR"
+            cp "$HOME/afterbird-delta/.build/args/release.gn" "$OUT_DIR/args.gn"
+            printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$OUT_DIR/args.gn"
+
+            cd "$SRC_DIR"
+            gn gen "$OUT_DIR"
+
+            echo "=== REMOTE GN ARGS ==="
+            grep -E '^(use_remoteexec|use_siso) = ' "$OUT_DIR/args.gn"
+
+      - run:
+          name: Preflight Chromium Android dependency graph
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            gn desc "$OUT_DIR" //chrome/android:chrome_public_apk deps --all
+
+            echo "=== C3 PRE-FLIGHT PASSED ==="
+            echo "=== DISK ==="
+            df -hT
+            echo "=== RAM ==="
+            free -h
+            echo "=== SOURCE SIZE ==="
+            du -sh "$SRC_DIR"
+            echo "=== WORKSPACE SIZE ==="
+            du -sh "$HOME/afterbird-chromium"
+            echo "=== GN OUTPUT SIZE ==="
+            du -sh "$OUT_DIR"
+            echo "=== GIT SIZE ==="
+            du -sh "$SRC_DIR/.git"
+            echo "=== REVISION ==="
+            git -C "$SRC_DIR" rev-parse HEAD
+            echo "=== TAG ==="
+            git -C "$SRC_DIR" describe --tags --exact-match
+            echo "=== PATCH STATUS ==="
+            git -C "$SRC_DIR" status --short
+
+      - run:
+          name: Build exact Afterbird APK through Siso BuildBuddy
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            LOG_FILE="$CIRCLE_WORKING_DIRECTORY/sandfox-remote-build.log"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            echo "=== REMOTE BUILD PRE-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD PRE-BUILD RAM ==="
+            free -h
+            echo "=== REMOTE BUILD START ==="
+
+            autoninja -C "$OUT_DIR" -j16 chrome_public_apk 2>&1 | tee "$LOG_FILE"
+
+            echo "=== REMOTE BUILD PASSED ==="
+            ls -lh "$OUT_DIR/apks/ChromePublic.apk"
+            echo "=== REMOTE EXECUTION COUNTS ==="
+            grep -E 'noexec:[0-9]+ local:[0-9]+ remote:[0-9]+ cache:[0-9]+ skip:[0-9]+' "$LOG_FILE" || true
+            echo "=== REMOTE BUILD POST-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD POST-BUILD RAM ==="
+            free -h
+
+            mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
+            cp "$OUT_DIR/apks/ChromePublic.apk" \
+              "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
+
+      - run:
+          name: Capture Siso failure diagnostics
+          when: always
+          command: |
+            set +e
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            DIAG_DIR="$CIRCLE_WORKING_DIRECTORY/siso-diagnostics"
+            mkdir -p "$DIAG_DIR"
+
+            if [ -f "$OUT_DIR/siso_failed_commands.sh" ]; then
+              cp "$OUT_DIR/siso_failed_commands.sh" "$DIAG_DIR/"
+            fi
+            if [ -f "$OUT_DIR/siso.INFO" ]; then
+              tail -n 5000 "$OUT_DIR/siso.INFO" > "$DIAG_DIR/siso.INFO.tail.txt"
+            fi
+            if [ -d "$OUT_DIR/siso_output" ]; then
+              du -sh "$OUT_DIR/siso_output" > "$DIAG_DIR/siso_output.size.txt"
+              find "$OUT_DIR/siso_output" -maxdepth 3 -type f -printf '%T@ %s %p\n' | sort -nr | head -n 300 > "$DIAG_DIR/siso_output.files.txt"
+              SIZE_MB="$(du -sm "$OUT_DIR/siso_output" | cut -f1)"
+              if [ "$SIZE_MB" -le 250 ]; then
+                tar -czf "$DIAG_DIR/siso_output.tar.gz" -C "$OUT_DIR" siso_output
+              else
+                echo "siso_output exceeds 250 MiB; listing only to avoid a huge artifact." >> "$DIAG_DIR/siso_output.size.txt"
+              fi
+            fi
+            echo "=== Captured diagnostic files ==="
+            find "$DIAG_DIR" -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+
+      - store_artifacts:
+          path: siso-diagnostics
+          destination: siso-diagnostics
+
+      - store_artifacts:
+          path: afterbird-remote/ChromePublic.apk
+          destination: afterbird-remote/ChromePublic.apk
+
+      - store_artifacts:
+          path: sandfox-remote-build.log
+          destination: afterbird-remote/sandfox-remote-build.log
+
+workflows:
+  c4-afterbird-buildbuddy-remote:
+    jobs:
+      - c4-afterbird-buildbuddy-remote
+ "$FILE" || true)"
+            if [ "$COUNT" != "1" ]; then
+              echo "Expected exactly one pinned Chromium clang_diagnostic_dir definition; found $COUNT"
+              grep -n 'clang_diagnostic_dir' "$FILE" || true
+              exit 1
+            fi
+
+            sed -i "s#clang_diagnostic_dir = rebase_path(\"//out/clang-crashreports\", root_build_dir)#clang_diagnostic_dir = \"clang-crashreports\"#" "$FILE"
+            grep -Fqx "$NEW" "$FILE"
+            if grep -Fq 'rebase_path("//out/clang-crashreports", root_build_dir)' "$FILE"; then
+              echo "Unsafe parent-directory crash path remains"
+              exit 1
+            fi
+
+            echo "=== TARGETED CLANG DIAGNOSTICS PATH FIX ==="
+            git -C "$SRC_DIR" diff -- "$FILE"
+
+      - run:
+          name: Configure Siso BuildBuddy remote execution
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            HELPER="$WORKDIR/buildbuddy-credential-helper"
+
+            test -n "${BUILDBUDDY_API_KEY:-}" || {
+              echo "BUILDBUDDY_API_KEY is missing from CircleCI project environment variables."
+              exit 1
+            }
+
+            printf '%s\n' \
+              '#!/usr/bin/env python3' \
+              'import json' \
+              'import os' \
+              'import sys' \
+              '' \
+              'if len(sys.argv) < 2 or sys.argv[1] != "get":' \
+              '    raise SystemExit(1)' \
+              '' \
+              'sys.stdin.read()' \
+              'key = os.environ["BUILDBUDDY_API_KEY"]' \
+              'print(json.dumps({' \
+              '    "headers": {' \
+              '        "x-buildbuddy-api-key": [key],' \
+              '    }' \
+              '}))' > "$HELPER"
+            chmod 700 "$HELPER"
+
+            export SISO_REAPI_ADDRESS="${AFTERBIRD_REAPI_ADDRESS:-remote.buildbuddy.io:443}"
+            export SISO_REAPI_INSTANCE="${AFTERBIRD_REAPI_INSTANCE:-default}"
+            export SISO_CREDENTIAL_HELPER="$HELPER"
+
+            python3 "$SRC_DIR/build/config/siso/configure_siso.py" \
+              --reapi_instance "$SISO_REAPI_INSTANCE" \
+              --reapi_address "$SISO_REAPI_ADDRESS" \
+              --reapi_backend_config_path "$CIRCLE_WORKING_DIRECTORY/ci/siso/buildbuddy_backend.star" \
+              --credential-helper "$HELPER"
+
+            echo "=== SISO CONFIG ==="
+            grep -E '^(SISO_REAPI_ADDRESS|SISO_REAPI_INSTANCE|SISO_CREDENTIAL_HELPER)=' \
+              "$SRC_DIR/build/config/siso/.sisoenv"
+
+      - run:
+          name: Generate release GN configuration
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+
+            mkdir -p "$OUT_DIR"
+            cp "$HOME/afterbird-delta/.build/args/release.gn" "$OUT_DIR/args.gn"
+            printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$OUT_DIR/args.gn"
+
+            cd "$SRC_DIR"
+            gn gen "$OUT_DIR"
+
+            echo "=== REMOTE GN ARGS ==="
+            grep -E '^(use_remoteexec|use_siso) = ' "$OUT_DIR/args.gn"
+
+      - run:
+          name: Preflight Chromium Android dependency graph
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            gn desc "$OUT_DIR" //chrome/android:chrome_public_apk deps --all
+
+            echo "=== C3 PRE-FLIGHT PASSED ==="
+            echo "=== DISK ==="
+            df -hT
+            echo "=== RAM ==="
+            free -h
+            echo "=== SOURCE SIZE ==="
+            du -sh "$SRC_DIR"
+            echo "=== WORKSPACE SIZE ==="
+            du -sh "$HOME/afterbird-chromium"
+            echo "=== GN OUTPUT SIZE ==="
+            du -sh "$OUT_DIR"
+            echo "=== GIT SIZE ==="
+            du -sh "$SRC_DIR/.git"
+            echo "=== REVISION ==="
+            git -C "$SRC_DIR" rev-parse HEAD
+            echo "=== TAG ==="
+            git -C "$SRC_DIR" describe --tags --exact-match
+            echo "=== PATCH STATUS ==="
+            git -C "$SRC_DIR" status --short
+
+      - run:
+          name: Build exact Afterbird APK through Siso BuildBuddy
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            LOG_FILE="$CIRCLE_WORKING_DIRECTORY/sandfox-remote-build.log"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            echo "=== REMOTE BUILD PRE-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD PRE-BUILD RAM ==="
+            free -h
+            echo "=== REMOTE BUILD START ==="
+
+            autoninja -C "$OUT_DIR" -j16 chrome_public_apk 2>&1 | tee "$LOG_FILE"
+
+            echo "=== REMOTE BUILD PASSED ==="
+            ls -lh "$OUT_DIR/apks/ChromePublic.apk"
+            echo "=== REMOTE EXECUTION COUNTS ==="
+            grep -E 'noexec:[0-9]+ local:[0-9]+ remote:[0-9]+ cache:[0-9]+ skip:[0-9]+' "$LOG_FILE" || true
+            echo "=== REMOTE BUILD POST-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD POST-BUILD RAM ==="
+            free -h
+
+            mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
+            cp "$OUT_DIR/apks/ChromePublic.apk" \
+              "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
+
+      - run:
+          name: Capture Siso failure diagnostics
+          when: always
+          command: |
+            set +e
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            DIAG_DIR="$CIRCLE_WORKING_DIRECTORY/siso-diagnostics"
+            mkdir -p "$DIAG_DIR"
+
+            if [ -f "$OUT_DIR/siso_failed_commands.sh" ]; then
+              cp "$OUT_DIR/siso_failed_commands.sh" "$DIAG_DIR/"
+            fi
+            if [ -f "$OUT_DIR/siso.INFO" ]; then
+              tail -n 5000 "$OUT_DIR/siso.INFO" > "$DIAG_DIR/siso.INFO.tail.txt"
+            fi
+            if [ -d "$OUT_DIR/siso_output" ]; then
+              du -sh "$OUT_DIR/siso_output" > "$DIAG_DIR/siso_output.size.txt"
+              find "$OUT_DIR/siso_output" -maxdepth 3 -type f -printf '%T@ %s %p\n' | sort -nr | head -n 300 > "$DIAG_DIR/siso_output.files.txt"
+              SIZE_MB="$(du -sm "$OUT_DIR/siso_output" | cut -f1)"
+              if [ "$SIZE_MB" -le 250 ]; then
+                tar -czf "$DIAG_DIR/siso_output.tar.gz" -C "$OUT_DIR" siso_output
+              else
+                echo "siso_output exceeds 250 MiB; listing only to avoid a huge artifact." >> "$DIAG_DIR/siso_output.size.txt"
+              fi
+            fi
+            echo "=== Captured diagnostic files ==="
+            find "$DIAG_DIR" -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+
+      - store_artifacts:
+          path: siso-diagnostics
+          destination: siso-diagnostics
+
+      - store_artifacts:
+          path: afterbird-remote/ChromePublic.apk
+          destination: afterbird-remote/ChromePublic.apk
+
+      - store_artifacts:
+          path: sandfox-remote-build.log
+          destination: afterbird-remote/sandfox-remote-build.log
+
+workflows:
+  c4-afterbird-buildbuddy-remote:
+    jobs:
+      - c4-afterbird-buildbuddy-remote
+ "$FILE"
+            if grep -Fq 'rebase_path("//out/clang-crashreports", root_build_dir)' "$FILE"; then
+              echo "Unsafe parent-directory crash path remains"
+              exit 1
+            fi
+
+            echo "=== TARGETED CLANG DIAGNOSTICS PATH FIX ==="
+            git -C "$SRC_DIR" diff -- "$FILE"
+
+      - run:
+          name: Configure Siso BuildBuddy remote execution
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            HELPER="$WORKDIR/buildbuddy-credential-helper"
+
+            test -n "${BUILDBUDDY_API_KEY:-}" || {
+              echo "BUILDBUDDY_API_KEY is missing from CircleCI project environment variables."
+              exit 1
+            }
+
+            printf '%s\n' \
+              '#!/usr/bin/env python3' \
+              'import json' \
+              'import os' \
+              'import sys' \
+              '' \
+              'if len(sys.argv) < 2 or sys.argv[1] != "get":' \
+              '    raise SystemExit(1)' \
+              '' \
+              'sys.stdin.read()' \
+              'key = os.environ["BUILDBUDDY_API_KEY"]' \
+              'print(json.dumps({' \
+              '    "headers": {' \
+              '        "x-buildbuddy-api-key": [key],' \
+              '    }' \
+              '}))' > "$HELPER"
+            chmod 700 "$HELPER"
+
+            export SISO_REAPI_ADDRESS="${AFTERBIRD_REAPI_ADDRESS:-remote.buildbuddy.io:443}"
+            export SISO_REAPI_INSTANCE="${AFTERBIRD_REAPI_INSTANCE:-default}"
+            export SISO_CREDENTIAL_HELPER="$HELPER"
+
+            python3 "$SRC_DIR/build/config/siso/configure_siso.py" \
+              --reapi_instance "$SISO_REAPI_INSTANCE" \
+              --reapi_address "$SISO_REAPI_ADDRESS" \
+              --reapi_backend_config_path "$CIRCLE_WORKING_DIRECTORY/ci/siso/buildbuddy_backend.star" \
+              --credential-helper "$HELPER"
+
+            echo "=== SISO CONFIG ==="
+            grep -E '^(SISO_REAPI_ADDRESS|SISO_REAPI_INSTANCE|SISO_CREDENTIAL_HELPER)=' \
+              "$SRC_DIR/build/config/siso/.sisoenv"
+
+      - run:
+          name: Generate release GN configuration
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            WORKDIR="$HOME/afterbird-chromium"
+            SRC_DIR="$WORKDIR/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+
+            mkdir -p "$OUT_DIR"
+            cp "$HOME/afterbird-delta/.build/args/release.gn" "$OUT_DIR/args.gn"
+            printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$OUT_DIR/args.gn"
+
+            cd "$SRC_DIR"
+            gn gen "$OUT_DIR"
+
+            echo "=== REMOTE GN ARGS ==="
+            grep -E '^(use_remoteexec|use_siso) = ' "$OUT_DIR/args.gn"
+
+      - run:
+          name: Preflight Chromium Android dependency graph
+          command: |
+            set -eux
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            gn desc "$OUT_DIR" //chrome/android:chrome_public_apk deps --all
+
+            echo "=== C3 PRE-FLIGHT PASSED ==="
+            echo "=== DISK ==="
+            df -hT
+            echo "=== RAM ==="
+            free -h
+            echo "=== SOURCE SIZE ==="
+            du -sh "$SRC_DIR"
+            echo "=== WORKSPACE SIZE ==="
+            du -sh "$HOME/afterbird-chromium"
+            echo "=== GN OUTPUT SIZE ==="
+            du -sh "$OUT_DIR"
+            echo "=== GIT SIZE ==="
+            du -sh "$SRC_DIR/.git"
+            echo "=== REVISION ==="
+            git -C "$SRC_DIR" rev-parse HEAD
+            echo "=== TAG ==="
+            git -C "$SRC_DIR" describe --tags --exact-match
+            echo "=== PATCH STATUS ==="
+            git -C "$SRC_DIR" status --short
+
+      - run:
+          name: Build exact Afterbird APK through Siso BuildBuddy
+          command: |
+            set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            LOG_FILE="$CIRCLE_WORKING_DIRECTORY/sandfox-remote-build.log"
+            export PATH="$SRC_DIR/buildtools/linux64:$PATH"
+            cd "$SRC_DIR"
+
+            echo "=== REMOTE BUILD PRE-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD PRE-BUILD RAM ==="
+            free -h
+            echo "=== REMOTE BUILD START ==="
+
+            autoninja -C "$OUT_DIR" -j16 chrome_public_apk 2>&1 | tee "$LOG_FILE"
+
+            echo "=== REMOTE BUILD PASSED ==="
+            ls -lh "$OUT_DIR/apks/ChromePublic.apk"
+            echo "=== REMOTE EXECUTION COUNTS ==="
+            grep -E 'noexec:[0-9]+ local:[0-9]+ remote:[0-9]+ cache:[0-9]+ skip:[0-9]+' "$LOG_FILE" || true
+            echo "=== REMOTE BUILD POST-BUILD DISK ==="
+            df -hT
+            echo "=== REMOTE BUILD POST-BUILD RAM ==="
+            free -h
+
+            mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
+            cp "$OUT_DIR/apks/ChromePublic.apk" \
+              "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
+
+      - run:
+          name: Capture Siso failure diagnostics
+          when: always
+          command: |
+            set +e
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            DIAG_DIR="$CIRCLE_WORKING_DIRECTORY/siso-diagnostics"
+            mkdir -p "$DIAG_DIR"
+
+            if [ -f "$OUT_DIR/siso_failed_commands.sh" ]; then
+              cp "$OUT_DIR/siso_failed_commands.sh" "$DIAG_DIR/"
+            fi
+            if [ -f "$OUT_DIR/siso.INFO" ]; then
+              tail -n 5000 "$OUT_DIR/siso.INFO" > "$DIAG_DIR/siso.INFO.tail.txt"
+            fi
+            if [ -d "$OUT_DIR/siso_output" ]; then
+              du -sh "$OUT_DIR/siso_output" > "$DIAG_DIR/siso_output.size.txt"
+              find "$OUT_DIR/siso_output" -maxdepth 3 -type f -printf '%T@ %s %p\n' | sort -nr | head -n 300 > "$DIAG_DIR/siso_output.files.txt"
+              SIZE_MB="$(du -sm "$OUT_DIR/siso_output" | cut -f1)"
+              if [ "$SIZE_MB" -le 250 ]; then
+                tar -czf "$DIAG_DIR/siso_output.tar.gz" -C "$OUT_DIR" siso_output
+              else
+                echo "siso_output exceeds 250 MiB; listing only to avoid a huge artifact." >> "$DIAG_DIR/siso_output.size.txt"
+              fi
+            fi
+            echo "=== Captured diagnostic files ==="
+            find "$DIAG_DIR" -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+
+      - store_artifacts:
+          path: siso-diagnostics
+          destination: siso-diagnostics
+
+      - store_artifacts:
+          path: afterbird-remote/ChromePublic.apk
+          destination: afterbird-remote/ChromePublic.apk
+
+      - store_artifacts:
+          path: sandfox-remote-build.log
+          destination: afterbird-remote/sandfox-remote-build.log
+
+workflows:
+  c4-afterbird-buildbuddy-remote:
+    jobs:
+      - c4-afterbird-buildbuddy-remote
+ "$FILE" || true)"
             if [ "$COUNT" != "1" ]; then
               echo "Expected exactly one pinned Chromium clang_diagnostic_dir definition; found $COUNT"
               grep -n 'clang_diagnostic_dir' "$FILE" || true
