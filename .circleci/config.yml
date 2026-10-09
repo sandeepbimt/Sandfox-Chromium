@@ -154,6 +154,33 @@ jobs:
             git status --short
 
       - run:
+          name: Normalize Clang crash diagnostics path for REAPI
+          command: |
+            set -euo pipefail
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            FILE="$SRC_DIR/build/config/compiler/compiler.gni"
+            OLD='clang_diagnostic_dir = rebase_path("//out/clang-crashreports", root_build_dir)'
+            NEW='clang_diagnostic_dir = "clang-crashreports"'
+
+            test -f "$FILE"
+            COUNT="$(grep -Fxc "$OLD" "$FILE" || true)"
+            if [ "$COUNT" != "1" ]; then
+              echo "Expected exactly one pinned Chromium clang_diagnostic_dir definition; found $COUNT"
+              grep -n 'clang_diagnostic_dir' "$FILE" || true
+              exit 1
+            fi
+
+            sed -i "s#clang_diagnostic_dir = rebase_path(\"//out/clang-crashreports\", root_build_dir)#clang_diagnostic_dir = \"clang-crashreports\"#" "$FILE"
+            grep -Fqx "$NEW" "$FILE"
+            if grep -Fq 'rebase_path("//out/clang-crashreports", root_build_dir)' "$FILE"; then
+              echo "Unsafe parent-directory crash path remains"
+              exit 1
+            fi
+
+            echo "=== TARGETED CLANG DIAGNOSTICS PATH FIX ==="
+            git -C "$SRC_DIR" diff -- "$FILE"
+
+      - run:
           name: Configure Siso BuildBuddy remote execution
           command: |
             set -euo pipefail
