@@ -190,14 +190,10 @@ jobs:
             export SISO_REAPI_INSTANCE="${AFTERBIRD_REAPI_INSTANCE:-default}"
             export SISO_CREDENTIAL_HELPER="$HELPER"
 
-            mkdir -p "$SRC_DIR/build/config/siso/backend_config"
-            cp "$CIRCLE_WORKING_DIRECTORY/ci/siso/buildbuddy_backend.star" \
-              "$SRC_DIR/build/config/siso/backend_config/backend.star"
-
             python3 "$SRC_DIR/build/config/siso/configure_siso.py" \
               --reapi_instance "$SISO_REAPI_INSTANCE" \
               --reapi_address "$SISO_REAPI_ADDRESS" \
-              --reapi_backend_config_path "$SRC_DIR/build/config/siso/backend_config/backend.star" \
+              --reapi_backend_config_path "$CIRCLE_WORKING_DIRECTORY/ci/siso/buildbuddy_backend.star" \
               --credential-helper "$HELPER"
 
             echo "=== SISO CONFIG ==="
