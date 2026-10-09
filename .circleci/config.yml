@@ -301,18 +301,16 @@ jobs:
             fi
             if [ -d "$OUT_DIR/siso_output" ]; then
               du -sh "$OUT_DIR/siso_output" > "$DIAG_DIR/siso_output.size.txt"
-              find "$OUT_DIR/siso_output" -maxdepth 3 -type f -printf '%T@ %s %p\\n' \\
-                | sort -nr | head -n 300 > "$DIAG_DIR/siso_output.files.txt"
+              find "$OUT_DIR/siso_output" -maxdepth 3 -type f -printf '%T@ %s %p\n' | sort -nr | head -n 300 > "$DIAG_DIR/siso_output.files.txt"
               SIZE_MB="$(du -sm "$OUT_DIR/siso_output" | cut -f1)"
               if [ "$SIZE_MB" -le 250 ]; then
                 tar -czf "$DIAG_DIR/siso_output.tar.gz" -C "$OUT_DIR" siso_output
               else
-                echo "siso_output exceeds 250 MiB; listing only to avoid a huge artifact." \\
-                  >> "$DIAG_DIR/siso_output.size.txt"
+                echo "siso_output exceeds 250 MiB; listing only to avoid a huge artifact." >> "$DIAG_DIR/siso_output.size.txt"
               fi
             fi
             echo "=== Captured diagnostic files ==="
-            find "$DIAG_DIR" -maxdepth 1 -type f -printf '%f %s bytes\\n' | sort
+            find "$DIAG_DIR" -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
 
       - store_artifacts:
           path: siso-diagnostics
