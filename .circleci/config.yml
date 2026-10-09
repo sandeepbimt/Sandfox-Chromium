@@ -168,23 +168,22 @@ jobs:
               exit 1
             }
 
-            cat > "$HELPER" <<'HELPER'
-            #!/usr/bin/env python3
-            import json
-            import os
-            import sys
-
-            if len(sys.argv) < 2 or sys.argv[1] != "get":
-                raise SystemExit(1)
-
-            sys.stdin.read()
-            key = os.environ["BUILDBUDDY_API_KEY"]
-            print(json.dumps({
-                "headers": {
-                    "x-buildbuddy-api-key": [key],
-                }
-            }))
-            HELPER
+            printf '%s\n' \
+              '#!/usr/bin/env python3' \
+              'import json' \
+              'import os' \
+              'import sys' \
+              '' \
+              'if len(sys.argv) < 2 or sys.argv[1] != "get":' \
+              '    raise SystemExit(1)' \
+              '' \
+              'sys.stdin.read()' \
+              'key = os.environ["BUILDBUDDY_API_KEY"]' \
+              'print(json.dumps({' \
+              '    "headers": {' \
+              '        "x-buildbuddy-api-key": [key],' \
+              '    }' \
+              '}))' > "$HELPER"
             chmod 700 "$HELPER"
 
             export SISO_REAPI_ADDRESS="${AFTERBIRD_REAPI_ADDRESS:-remote.buildbuddy.io:443}"
