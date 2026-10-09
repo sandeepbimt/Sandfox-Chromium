@@ -246,6 +246,28 @@ jobs:
             echo "=== REMOTE GN ARGS ==="
             grep -E '^(use_remoteexec|use_siso) = ' "$OUT_DIR/args.gn"
 
+            echo "=== SISO CACHE CONFIG DIAGNOSTICS ==="
+            SISO_CONFIG_DIR="$SRC_DIR/build/config/siso"
+            for FILE in "$SISO_CONFIG_DIR/.sisorc" "$SISO_CONFIG_DIR/.sisoenv"; do
+              if [ -f "$FILE" ]; then
+                echo "--- $FILE ---"
+                if [ "$(basename "$FILE")" = ".sisorc" ]; then
+                  cat "$FILE"
+                else
+                  grep -E '^(SISO_REAPI_ADDRESS|SISO_REAPI_INSTANCE|SISO_CREDENTIAL_HELPER)=' "$FILE" || true
+                fi
+              else
+                echo "MISSING: $FILE"
+              fi
+            done
+            echo "=== SISO EXECUTABLE VERSION ==="
+            if command -v siso >/dev/null 2>&1; then
+              siso version 2>&1 || siso --version 2>&1 || true
+              command -v siso
+            else
+              find "$SRC_DIR/buildtools" -maxdepth 4 -type f -name siso -print 2>/dev/null | head -n 10
+            fi
+
       - run:
           name: Preflight Chromium Android dependency graph
           command: |
