@@ -283,6 +283,41 @@ jobs:
             cp "$OUT_DIR/apks/ChromePublic.apk" \
               "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
 
+      - run:
+          name: Capture Siso failure diagnostics
+          when: always
+          command: |
+            set +e
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            DIAG_DIR="$CIRCLE_WORKING_DIRECTORY/siso-diagnostics"
+            mkdir -p "$DIAG_DIR"
+
+            if [ -f "$OUT_DIR/siso_failed_commands.sh" ]; then
+              cp "$OUT_DIR/siso_failed_commands.sh" "$DIAG_DIR/"
+            fi
+            if [ -f "$OUT_DIR/siso.INFO" ]; then
+              tail -n 5000 "$OUT_DIR/siso.INFO" > "$DIAG_DIR/siso.INFO.tail.txt"
+            fi
+            if [ -d "$OUT_DIR/siso_output" ]; then
+              du -sh "$OUT_DIR/siso_output" > "$DIAG_DIR/siso_output.size.txt"
+              find "$OUT_DIR/siso_output" -maxdepth 3 -type f -printf '%T@ %s %p\\n' \\
+                | sort -nr | head -n 300 > "$DIAG_DIR/siso_output.files.txt"
+              SIZE_MB="$(du -sm "$OUT_DIR/siso_output" | cut -f1)"
+              if [ "$SIZE_MB" -le 250 ]; then
+                tar -czf "$DIAG_DIR/siso_output.tar.gz" -C "$OUT_DIR" siso_output
+              else
+                echo "siso_output exceeds 250 MiB; listing only to avoid a huge artifact." \\
+                  >> "$DIAG_DIR/siso_output.size.txt"
+              fi
+            fi
+            echo "=== Captured diagnostic files ==="
+            find "$DIAG_DIR" -maxdepth 1 -type f -printf '%f %s bytes\\n' | sort
+
+      - store_artifacts:
+          path: siso-diagnostics
+          destination: siso-diagnostics
+
       - store_artifacts:
           path: afterbird-remote/ChromePublic.apk
           destination: afterbird-remote/ChromePublic.apk
