@@ -228,7 +228,7 @@ jobs:
               "$SRC_DIR/build/config/siso/.sisoenv"
 
             # Enable trusted remote action-cache writes so completed compile actions can be reused across clean CI jobs.
-            printf '%s\\n' 'ninja -re_cache_enable_write=true' > "$SRC_DIR/build/config/siso/.sisorc"
+            printf '%s\n' 'ninja -re_cache_enable_write=true' > "$SRC_DIR/build/config/siso/.sisorc"
             echo "=== SISO CACHE WRITE CONFIG ==="
             cat "$SRC_DIR/build/config/siso/.sisorc"
 
