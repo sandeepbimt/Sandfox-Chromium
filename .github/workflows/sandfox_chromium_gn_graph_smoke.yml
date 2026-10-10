@@ -28,7 +28,7 @@ on:
         default: false
         type: boolean
       checkpoint_output_probe:
-        description: "Stream-compress only the GN output directory to estimate a smaller incremental-build checkpoint"
+        description: "Stream-compress the GN output directory after the optional object compile to measure incremental-build checkpoint size"
         required: true
         default: false
         type: boolean
@@ -95,8 +95,8 @@ jobs:
             echo "ERROR: checkpoint_scope_probe and checkpoint_archive_probe are separate experiments; enable only one."
             exit 2
           fi
-          if [[ "${SANDFOX_CHECKPOINT_OUTPUT_PROBE}" == "true" && ( "${SANDFOX_COMPILE_PROBE}" == "true" || "${SANDFOX_CHECKPOINT_SCOPE_PROBE}" == "true" || "${SANDFOX_CHECKPOINT_ARCHIVE_PROBE}" == "true" ) ]]; then
-            echo "ERROR: checkpoint_output_probe must run alone after GN; disable compile, scope, and full archive probes."
+          if [[ "${SANDFOX_CHECKPOINT_OUTPUT_PROBE}" == "true" && ( "${SANDFOX_CHECKPOINT_SCOPE_PROBE}" == "true" || "${SANDFOX_CHECKPOINT_ARCHIVE_PROBE}" == "true" ) ]]; then
+            echo "ERROR: checkpoint_output_probe must not run with scope or full archive probes."
             exit 2
           fi
 
@@ -142,31 +142,6 @@ jobs:
           if [[ "${PIPELINE_STATUS}" -ne 0 ]]; then
             echo "ERROR: production pipeline smoke path failed with exit code ${PIPELINE_STATUS}."
             exit "${PIPELINE_STATUS}"
-          fi
-
-          if [[ "${SANDFOX_CHECKPOINT_OUTPUT_PROBE}" == "true" ]]; then
-            OUT_DIR="${AFTERBIRD_CHROMIUM_WORKDIR}/src/out/afterbird_production"
-            echo "=== STREAMED GN OUTPUT CHECKPOINT COMPRESSION PROBE ==="
-            if ! command -v zstd >/dev/null 2>&1; then
-              echo "ERROR: zstd is not available; refusing to install extra tooling during this diagnostic."
-              exit 2
-            fi
-            echo "Archive scope: out/afterbird_production only, after GN generation; no archive file is written."
-            du -sb "${OUT_DIR}"
-            du -x -h --max-depth=1 "${OUT_DIR}" 2>/dev/null | sort -h
-            OUTPUT_PROBE_START="$(date +%s)"
-            COMPRESSED_BYTES="$(tar --format=pax -cf - -C "${AFTERBIRD_CHROMIUM_WORKDIR}/src/out" afterbird_production | zstd -3 -T0 -c | wc -c | tr -d '[:space:]')"
-            OUTPUT_PROBE_ELAPSED="$(( $(date +%s) - OUTPUT_PROBE_START ))"
-            echo "checkpoint_output_compressed_bytes=${COMPRESSED_BYTES}"
-            echo "checkpoint_output_elapsed_seconds=${OUTPUT_PROBE_ELAPSED}"
-            for RATE_MBPS in 20 50 100; do
-              TRANSFER_SECONDS="$(( (COMPRESSED_BYTES * 8 + RATE_MBPS * 1000000 - 1) / (RATE_MBPS * 1000000) ))"
-              echo "theoretical_output_upload_seconds_at_${RATE_MBPS}Mbps=${TRANSFER_SECONDS}"
-            done
-            resource_snapshot "after_checkpoint_output_probe"
-            echo "=== GN OUTPUT CHECKPOINT COMPRESSION PROBE COMPLETE ==="
-          else
-            echo "GN output checkpoint probe disabled; no output archive compression was run."
           fi
 
           if [[ "${SANDFOX_CHECKPOINT_SCOPE_PROBE}" == "true" ]]; then
@@ -245,6 +220,31 @@ jobs:
             echo "=== SANDFOX REAL CHROMIUM REMOTE OBJECT COMPILE CONFIRMED ==="
           else
             echo "Compile probe disabled; GN graph only."
+          fi
+
+          if [[ "${SANDFOX_CHECKPOINT_OUTPUT_PROBE}" == "true" ]]; then
+            OUT_DIR="${AFTERBIRD_CHROMIUM_WORKDIR}/src/out/afterbird_production"
+            echo "=== STREAMED GN OUTPUT CHECKPOINT COMPRESSION PROBE ==="
+            if ! command -v zstd >/dev/null 2>&1; then
+              echo "ERROR: zstd is not available; refusing to install extra tooling during this diagnostic."
+              exit 2
+            fi
+            echo "Archive scope: out/afterbird_production only, after GN generation; no archive file is written."
+            du -sb "${OUT_DIR}"
+            du -x -h --max-depth=1 "${OUT_DIR}" 2>/dev/null | sort -h
+            OUTPUT_PROBE_START="$(date +%s)"
+            COMPRESSED_BYTES="$(tar --format=pax -cf - -C "${AFTERBIRD_CHROMIUM_WORKDIR}/src/out" afterbird_production | zstd -3 -T0 -c | wc -c | tr -d '[:space:]')"
+            OUTPUT_PROBE_ELAPSED="$(( $(date +%s) - OUTPUT_PROBE_START ))"
+            echo "checkpoint_output_compressed_bytes=${COMPRESSED_BYTES}"
+            echo "checkpoint_output_elapsed_seconds=${OUTPUT_PROBE_ELAPSED}"
+            for RATE_MBPS in 20 50 100; do
+              TRANSFER_SECONDS="$(( (COMPRESSED_BYTES * 8 + RATE_MBPS * 1000000 - 1) / (RATE_MBPS * 1000000) ))"
+              echo "theoretical_output_upload_seconds_at_${RATE_MBPS}Mbps=${TRANSFER_SECONDS}"
+            done
+            resource_snapshot "after_checkpoint_output_probe"
+            echo "=== GN OUTPUT CHECKPOINT COMPRESSION PROBE COMPLETE ==="
+          else
+            echo "GN output checkpoint probe disabled; no output archive compression was run."
           fi
 
           echo "=== GN GRAPH SMOKE PASSED ==="
