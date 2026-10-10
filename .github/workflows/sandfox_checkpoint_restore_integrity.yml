@@ -51,7 +51,9 @@ jobs:
           git -C "${SRC}" rev-parse HEAD
           git -C "${SRC}" describe --tags --exact-match
           git -C "${SRC}" status --short
-          sha256sum "${OUT}/args.gn" "${SRC}/build/config/siso/backend_config/backend.star" 2>/dev/null || true
+          test -s "${OUT}/args.gn" || { echo "ERROR: generated args.gn is missing"; exit 1; }
+          test -s "${SRC}/build/config/siso/backend_config/backend.star" || { echo "ERROR: configured Siso backend.star is missing"; exit 1; }
+          sha256sum "${OUT}/args.gn" "${SRC}/build/config/siso/backend_config/backend.star"
           echo "=== checkpoint sizes ==="
           du -sh "${SRC}" "${OUT}"
           find "${OUT}" -type f \( -name '.siso_fs_state.journal' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
