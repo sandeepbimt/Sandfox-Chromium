@@ -95,6 +95,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sandfox-gn-graph-smoke-log
-          path: ${{ runner.temp }}/sandfox-gn-smoke.log
+          path: |
+            ${{ runner.temp }}/sandfox-gn-smoke.log
+            ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso_output
+            ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso.INFO
+            ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso_failed_commands.sh
           if-no-files-found: warn
           retention-days: 7
