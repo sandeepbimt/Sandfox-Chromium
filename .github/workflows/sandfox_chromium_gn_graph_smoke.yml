@@ -8,6 +8,15 @@ on:
         required: true
         default: false
         type: boolean
+      compile_jobs:
+        description: "Maximum Ninja jobs for the optional compile probe (use 1 first; then test 2 or 4)"
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "4"
 
 permissions:
   contents: read
@@ -26,6 +35,7 @@ jobs:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
           RUNNER_TEMP: ${{ runner.temp }}
           SANDFOX_COMPILE_PROBE: ${{ inputs.compile_probe }}
+          SANDFOX_COMPILE_JOBS: ${{ inputs.compile_jobs }}
         shell: bash
         run: |
           set -euo pipefail
@@ -77,8 +87,13 @@ jobs:
             fi
             echo "Selected object target: ${OBJECT_TARGET}"
             echo "=== COMPILE ONE REAL OBJECT THROUGH THE PRODUCTION SISO CONFIG ==="
+            if [[ "${SANDFOX_COMPILE_JOBS}" != "1" && "${SANDFOX_COMPILE_JOBS}" != "2" && "${SANDFOX_COMPILE_JOBS}" != "4" ]]; then
+              echo "ERROR: compile_jobs must be 1, 2, or 4."
+              exit 1
+            fi
+            echo "Compile probe job limit: ${SANDFOX_COMPILE_JOBS}"
             set -o pipefail
-            autoninja -C "${OUT_DIR}" -j 1 "${OBJECT_TARGET}" 2>&1 | tee "${COMPILE_LOG}"
+            autoninja -C "${OUT_DIR}" -j "${SANDFOX_COMPILE_JOBS}" "${OBJECT_TARGET}" 2>&1 | tee "${COMPILE_LOG}"
             echo "=== REQUIRE A FRESH REMOTE EXECUTION ==="
             grep -E 'remote:[1-9][0-9]*' "${COMPILE_LOG}"
             echo "=== SANDFOX REAL CHROMIUM REMOTE OBJECT COMPILE CONFIRMED ==="
