@@ -173,6 +173,25 @@ jobs:
           echo "=== checkpoint restore validation complete ==="
           echo "NOTE: incremental success proves the restored output is usable; it does not by itself prove a full APK can be resumed."
 
+          echo "=== APK target dry-run sizing (no build commands executed) ==="
+          APK_PLAN_LOG="${RUNNER_TEMP}/chrome-public-apk-dry-run.log"
+          set +e
+          autoninja -C "${OUT}" -n chrome_public_apk > "${APK_PLAN_LOG}" 2>&1
+          APK_PLAN_RC=$?
+          set -e
+          echo "apk_plan_dry_run_exit_code=${APK_PLAN_RC}"
+          if [[ "${APK_PLAN_RC}" -ne 0 ]]; then
+            echo "ERROR: APK target dry-run failed; last 100 lines follow"
+            tail -n 100 "${APK_PLAN_LOG}"
+            exit "${APK_PLAN_RC}"
+          fi
+          APK_PLAN_STEPS="$(grep -Ec '^\[[[:space:]]*[0-9]+/[0-9]+\]' "${APK_PLAN_LOG}" || true)"
+          echo "apk_plan_step_count=${APK_PLAN_STEPS}"
+          echo "apk_plan_output_bytes=$(wc -c < "${APK_PLAN_LOG}")"
+          echo "=== APK dry-run command categories (sample) ==="
+          grep -E '^\[[[:space:]]*[0-9]+/[0-9]+\].*(CXX|LINK|ACTION|COPY|STAMP|JAR|JAVA)' "${APK_PLAN_LOG}" | head -n 30 || true
+          echo "=== APK target dry-run sizing complete; no APK compilation was performed ==="
+
       - name: Preserve restore diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -181,6 +200,7 @@ jobs:
           path: |
             ${{ runner.temp }}/checkpoint-restore.log
             ${{ runner.temp }}/checkpoint-incremental.log
+            ${{ runner.temp }}/chrome-public-apk-dry-run.log
             ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso_output
             ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso.INFO
           if-no-files-found: warn
