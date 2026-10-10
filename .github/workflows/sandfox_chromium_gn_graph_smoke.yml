@@ -17,6 +17,11 @@ on:
           - "1"
           - "2"
           - "4"
+      checkpoint_archive_probe:
+        description: "Stream-compress the completed Chromium workspace to measure checkpoint size/time without writing an archive"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -36,6 +41,7 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
           SANDFOX_COMPILE_PROBE: ${{ inputs.compile_probe }}
           SANDFOX_COMPILE_JOBS: ${{ inputs.compile_jobs }}
+          SANDFOX_CHECKPOINT_ARCHIVE_PROBE: ${{ inputs.checkpoint_archive_probe }}
         shell: bash
         run: |
           set -euo pipefail
@@ -68,6 +74,11 @@ jobs:
               echo "GN output directory not present yet."
             fi
           }
+
+          if [[ "${SANDFOX_COMPILE_PROBE}" == "true" && "${SANDFOX_CHECKPOINT_ARCHIVE_PROBE}" == "true" ]]; then
+            echo "ERROR: compile_probe and checkpoint_archive_probe are separate experiments; enable only one."
+            exit 2
+          fi
 
           echo "=== SANDFOX GN GRAPH SMOKE: PREFLIGHT ==="
           df -h /
@@ -111,6 +122,32 @@ jobs:
           if [[ "${PIPELINE_STATUS}" -ne 0 ]]; then
             echo "ERROR: production pipeline smoke path failed with exit code ${PIPELINE_STATUS}."
             exit "${PIPELINE_STATUS}"
+          fi
+
+          if [[ "${SANDFOX_CHECKPOINT_ARCHIVE_PROBE}" == "true" ]]; then
+            CHROMIUM_SRC="${AFTERBIRD_CHROMIUM_WORKDIR}/src"
+            echo "=== STREAMED CHECKPOINT COMPRESSION PROBE (NO ARCHIVE FILE) ==="
+            if ! command -v zstd >/dev/null 2>&1; then
+              echo "ERROR: zstd is not available; refusing to install extra tooling during this diagnostic."
+              exit 2
+            fi
+            echo "Archive scope: complete Chromium src tree, including GN output and repository metadata."
+            echo "Archive format: PAX tar stream compressed with zstd level 3."
+            echo "The compressed stream is counted and discarded; no checkpoint archive is written."
+            du -sb "${CHROMIUM_SRC}"
+            CHECKPOINT_PROBE_START="$(date +%s)"
+            COMPRESSED_BYTES="$(tar --format=pax -cf - -C "${AFTERBIRD_CHROMIUM_WORKDIR}" src | zstd -3 -T0 -c | wc -c | tr -d '[:space:]')"
+            CHECKPOINT_PROBE_ELAPSED="$(( $(date +%s) - CHECKPOINT_PROBE_START ))"
+            echo "checkpoint_stream_compressed_bytes=${COMPRESSED_BYTES}"
+            echo "checkpoint_stream_elapsed_seconds=${CHECKPOINT_PROBE_ELAPSED}"
+            for RATE_MBPS in 20 50 100; do
+              TRANSFER_SECONDS="$(( (COMPRESSED_BYTES * 8 + RATE_MBPS * 1000000 - 1) / (RATE_MBPS * 1000000) ))"
+              echo "theoretical_upload_seconds_at_${RATE_MBPS}Mbps=${TRANSFER_SECONDS}"
+            done
+            resource_snapshot "after_checkpoint_stream_probe"
+            echo "=== STREAMED CHECKPOINT COMPRESSION PROBE COMPLETE ==="
+          else
+            echo "Checkpoint archive probe disabled; no archive compression was run."
           fi
 
           if [[ "${SANDFOX_COMPILE_PROBE}" == "true" ]]; then
