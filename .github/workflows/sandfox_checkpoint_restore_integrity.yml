@@ -149,7 +149,7 @@ jobs:
           echo "=== incremental validation: original bounded object target ==="
           TARGET="$(cat "${RUNNER_TEMP}/checkpoint/checkpoint-target.txt")"
           [[ -n "${TARGET}" ]] || { echo "ERROR: checkpoint target provenance is empty"; exit 1; }
-          ninja -C "${OUT}" -t targets all | grep -Fqx "${TARGET}" || { echo "ERROR: original target is absent from regenerated GN graph: ${TARGET}"; exit 1; }
+          ninja -C "${OUT}" -t targets all | awk -F': ' -v target="${TARGET}" '$1 == target { found=1 } END { exit !found }' || { echo "ERROR: original target is absent from regenerated GN graph: ${TARGET}"; exit 1; }
           echo "Selected original object target: ${TARGET}"
           COMPILE_LOG="${RUNNER_TEMP}/checkpoint-incremental.log"
           set -o pipefail
