@@ -68,7 +68,7 @@ jobs:
           echo "=== create timestamp-preserving compressed GN output checkpoint ==="
           command -v zstd || { echo "ERROR: zstd is required for checkpoint compression"; exit 2; }
           tar --format=pax -cf - -C "${SRC}/out" afterbird_production | zstd -3 -T0 -o "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
-          sha256sum "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
+          sha256sum "${RUNNER_TEMP}/sandfox-gn-output.tar.zst" | tee "${RUNNER_TEMP}/sandfox-gn-output.tar.zst.sha256"
           stat --printf='checkpoint_compressed_bytes=%s\n' "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
           du -sh "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
           echo "checkpoint_create_complete=true"
@@ -79,6 +79,7 @@ jobs:
           name: sandfox-gn-output-checkpoint
           path: |
             ${{ runner.temp }}/sandfox-gn-output.tar.zst
+            ${{ runner.temp }}/sandfox-gn-output.tar.zst.sha256
             ${{ runner.temp }}/checkpoint-create.log
             ${{ runner.temp }}/checkpoint-compile.log
             ${{ runner.temp }}/checkpoint-target.txt
@@ -137,7 +138,8 @@ jobs:
           ACTUAL_TAG="$(git -C "${SRC}" describe --tags --exact-match)"
           [[ "${ACTUAL_TAG}" == "${EXPECTED_TAG}" ]] || { echo "ERROR: unexpected Chromium tag ${ACTUAL_TAG}"; exit 1; }
 
-          echo "=== restore compressed output checkpoint ==="
+          echo "=== verify and restore compressed output checkpoint ==="
+          (cd "${RUNNER_TEMP}/checkpoint" && sha256sum --check sandfox-gn-output.tar.zst.sha256)
           zstd -dc "${RUNNER_TEMP}/checkpoint/sandfox-gn-output.tar.zst" | tar --format=pax -xf - -C "${SRC}/out"
           test -f "${OUT}/args.gn"
           grep -q 'use_remoteexec = true' "${OUT}/args.gn"
