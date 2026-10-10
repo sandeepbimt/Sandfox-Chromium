@@ -44,6 +44,30 @@ jobs:
           touch "${LOG_FILE}"
           exec > >(tee -a "${LOG_FILE}") 2>&1
 
+          resource_snapshot() {
+            local label="$1"
+            local chromium_src="${AFTERBIRD_CHROMIUM_WORKDIR:-${RUNNER_TEMP}/afterbird-chromium}/src"
+            local out_dir="${chromium_src}/out/afterbird_production"
+            echo "=== RESOURCE SNAPSHOT: ${label} ==="
+            date -u '+timestamp_utc=%Y-%m-%dT%H:%M:%SZ'
+            df -h /
+            df -PB1 /
+            if [[ -r /proc/meminfo ]]; then
+              grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo
+            fi
+            if [[ -d "${chromium_src}" ]]; then
+              du -sh "${chromium_src}"
+            else
+              echo "Chromium source tree not present yet."
+            fi
+            if [[ -d "${out_dir}" ]]; then
+              du -sh "${out_dir}"
+              find "${out_dir}" -maxdepth 2 -type f -name 'siso*' -exec du -sh {} + 2>/dev/null || true
+            else
+              echo "GN output directory not present yet."
+            fi
+          }
+
           echo "=== SANDFOX GN GRAPH SMOKE: PREFLIGHT ==="
           df -h /
           FREE_BYTES="$(df -PB1 / | awk 'NR == 2 {print $4}')"
@@ -73,7 +97,20 @@ jobs:
           export AFTERBIRD_FETCH_RETRIES=2
 
           echo "=== RUNNING PRODUCTION PIPELINE SMOKE PATH (NO APK COMPILE) ==="
-          bash ci/chromium_android_pipeline.sh
+          resource_snapshot "before_dependency_sync_and_gn"
+          PIPELINE_START="$(date +%s)"
+          if bash ci/chromium_android_pipeline.sh; then
+            PIPELINE_STATUS=0
+          else
+            PIPELINE_STATUS=$?
+          fi
+          PIPELINE_ELAPSED="$(( $(date +%s) - PIPELINE_START ))"
+          echo "pipeline_elapsed_seconds=${PIPELINE_ELAPSED}"
+          resource_snapshot "after_dependency_sync_and_gn"
+          if [[ "${PIPELINE_STATUS}" -ne 0 ]]; then
+            echo "ERROR: production pipeline smoke path failed with exit code ${PIPELINE_STATUS}."
+            exit "${PIPELINE_STATUS}"
+          fi
 
           if [[ "${SANDFOX_COMPILE_PROBE}" == "true" ]]; then
             CHROMIUM_SRC="${AFTERBIRD_CHROMIUM_WORKDIR}/src"
@@ -96,7 +133,11 @@ jobs:
             # Force cache misses for this bounded probe so remote execution is measured,
             # not inferred from shared-cache hits. Strict remote prevents local execution
             # of actions that Siso has configured for remote execution.
+            COMPILE_START="$(date +%s)"
             autoninja -C "${OUT_DIR}" -j "${SANDFOX_COMPILE_JOBS}" -re_cache_enable_read=false --strict_remote "${OBJECT_TARGET}" 2>&1 | tee "${COMPILE_LOG}"
+            COMPILE_ELAPSED="$(( $(date +%s) - COMPILE_START ))"
+            echo "compile_probe_elapsed_seconds=${COMPILE_ELAPSED}"
+            resource_snapshot "after_compile_probe"
             echo "=== REQUIRE A FRESH REMOTE EXECUTION ==="
             grep -E 'remote:[1-9][0-9]*' "${COMPILE_LOG}"
             echo "=== SANDFOX REAL CHROMIUM REMOTE OBJECT COMPILE CONFIRMED ==="
