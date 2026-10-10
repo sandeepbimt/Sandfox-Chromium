@@ -79,6 +79,13 @@ jobs:
           cat "${CHROMIUM_DIR}/build/config/siso/.sisoenv"
           test -f "${CHROMIUM_DIR}/build/config/siso/backend_config/backend.star"
 
+          # configure_siso.py writes plain KEY=VALUE lines; export them to Siso.
+          set -a
+          source "${CHROMIUM_DIR}/build/config/siso/.sisoenv"
+          set +a
+          test "${SISO_REAPI_INSTANCE}" = "default"
+          test "${SISO_REAPI_ADDRESS}" = "remote.buildbuddy.io:443"
+
           cat > "${CHROMIUM_DIR}/build/config/siso/main.star" <<'STAR'
           load("@builtin//encoding.star", "json")
           load("@builtin//struct.star", "module")
