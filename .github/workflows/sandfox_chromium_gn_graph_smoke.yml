@@ -22,6 +22,11 @@ on:
         required: true
         default: false
         type: boolean
+      checkpoint_scope_probe:
+        description: "Report top-level Chromium and GN output directory sizes to identify selective checkpoint candidates"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -42,6 +47,7 @@ jobs:
           SANDFOX_COMPILE_PROBE: ${{ inputs.compile_probe }}
           SANDFOX_COMPILE_JOBS: ${{ inputs.compile_jobs }}
           SANDFOX_CHECKPOINT_ARCHIVE_PROBE: ${{ inputs.checkpoint_archive_probe }}
+          SANDFOX_CHECKPOINT_SCOPE_PROBE: ${{ inputs.checkpoint_scope_probe }}
         shell: bash
         run: |
           set -euo pipefail
@@ -77,6 +83,10 @@ jobs:
 
           if [[ "${SANDFOX_COMPILE_PROBE}" == "true" && "${SANDFOX_CHECKPOINT_ARCHIVE_PROBE}" == "true" ]]; then
             echo "ERROR: compile_probe and checkpoint_archive_probe are separate experiments; enable only one."
+            exit 2
+          fi
+          if [[ "${SANDFOX_CHECKPOINT_SCOPE_PROBE}" == "true" && "${SANDFOX_CHECKPOINT_ARCHIVE_PROBE}" == "true" ]]; then
+            echo "ERROR: checkpoint_scope_probe and checkpoint_archive_probe are separate experiments; enable only one."
             exit 2
           fi
 
@@ -122,6 +132,25 @@ jobs:
           if [[ "${PIPELINE_STATUS}" -ne 0 ]]; then
             echo "ERROR: production pipeline smoke path failed with exit code ${PIPELINE_STATUS}."
             exit "${PIPELINE_STATUS}"
+          fi
+
+          if [[ "${SANDFOX_CHECKPOINT_SCOPE_PROBE}" == "true" ]]; then
+            CHROMIUM_SRC="${AFTERBIRD_CHROMIUM_WORKDIR}/src"
+            OUT_DIR="${CHROMIUM_SRC}/out/afterbird_production"
+            echo "=== CHECKPOINT SCOPE DIRECTORY BREAKDOWN ==="
+            echo "Sizes are apparent allocated directory usage from du; no files are archived or deleted."
+            echo "--- Chromium src: largest top-level directories (including .git) ---"
+            du -x -h --max-depth=1 "${CHROMIUM_SRC}" 2>/dev/null | sort -h
+            echo "--- GN output: largest top-level directories ---"
+            du -x -h --max-depth=1 "${OUT_DIR}" 2>/dev/null | sort -h
+            echo "--- Chromium source Git metadata ---"
+            if [[ -d "${CHROMIUM_SRC}/.git" ]]; then du -sh "${CHROMIUM_SRC}/.git"; fi
+            echo "--- Siso state files ---"
+            find "${OUT_DIR}" -type f \( -name '.siso_fs_state.journal' -o -name 'siso.INFO' -o -name 'siso_output' -o -name 'siso_failed_commands.sh' \) -exec du -sh {} + 2>/dev/null || true
+            resource_snapshot "after_checkpoint_scope_probe"
+            echo "=== CHECKPOINT SCOPE BREAKDOWN COMPLETE ==="
+          else
+            echo "Checkpoint scope probe disabled; no directory breakdown was run."
           fi
 
           if [[ "${SANDFOX_CHECKPOINT_ARCHIVE_PROBE}" == "true" ]]; then
