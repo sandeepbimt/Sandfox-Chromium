@@ -371,16 +371,14 @@ HELPER
   export SISO_CREDENTIAL_HELPER="${helper}"
 
   mkdir -p "${WORKDIR}/src/build/config/siso/backend_config"
-  cp "${REPO_ROOT}/ci/siso/buildbuddy_backend.star" \
-    "${WORKDIR}/src/build/config/siso/backend_config/backend.star"
 
-  # Use Chromium's configure_siso.py rather than hand-writing .sisoenv.
-  # It is the upstream-supported path for non-Google REAPI backends and also
-  # records the credential helper used by autoninja/Siso.
+  # Pass a distinct source path: configure_siso.py removes backend.star before
+  # copying the supplied config, so using the destination as source deletes it.
+  # Use Chromium's upstream-supported path rather than hand-writing .sisoenv.
   python3 "${WORKDIR}/src/build/config/siso/configure_siso.py" \
     --reapi_instance "${SISO_REAPI_INSTANCE}" \
     --reapi_address "${SISO_REAPI_ADDRESS}" \
-    --reapi_backend_config_path "${WORKDIR}/src/build/config/siso/backend_config/backend.star" \
+    --reapi_backend_config_path "${REPO_ROOT}/ci/siso/buildbuddy_backend.star" \
     --credential-helper "${helper}"
 
   log "Siso/BuildBuddy remote execution enabled"
