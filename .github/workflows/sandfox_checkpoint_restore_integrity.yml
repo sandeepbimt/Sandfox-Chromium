@@ -159,7 +159,7 @@ jobs:
           ninja -C "${OUT}" -t targets all | awk -F': ' -v target="${TARGET}" '$1 == target { found=1 } END { exit !found }' || { echo "ERROR: original target is absent from regenerated GN graph: ${TARGET}"; exit 1; }
           echo "Selected original object target: ${TARGET}"
           echo "=== restored target dependency graph ==="
-          ninja -C "${OUT}" -t query "${TARGET}"
+          autoninja -C "${OUT}" -t query "${TARGET}"
           echo "=== restored output inventory ==="
           printf 'object_files='; find "${OUT}/obj" -type f -name '*.o' 2>/dev/null | wc -l
           printf 'module_files='; find "${OUT}/obj" -type f -name '*.pcm' 2>/dev/null | wc -l
