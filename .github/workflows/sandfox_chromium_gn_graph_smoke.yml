@@ -63,6 +63,7 @@ jobs:
             if [[ -d "${out_dir}" ]]; then
               du -sh "${out_dir}"
               find "${out_dir}" -maxdepth 2 -type f -name 'siso*' -exec du -sh {} + 2>/dev/null || true
+              find "${out_dir}" -maxdepth 2 -type f -name '.siso_fs_state.journal' -exec du -sh {} + 2>/dev/null || true
             else
               echo "GN output directory not present yet."
             fi
