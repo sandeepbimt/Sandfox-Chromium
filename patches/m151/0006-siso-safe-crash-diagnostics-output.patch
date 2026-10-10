@@ -1,7 +1,7 @@
 diff --git a/build/config/siso/clang_all.star b/build/config/siso/clang_all.star
 --- a/build/config/siso/clang_all.star
 +++ b/build/config/siso/clang_all.star
-@@ -31,6 +31,11 @@ def __check_crash_diagnostics(ctx, args):
+@@ -35,4 +35,9 @@ def __check_crash_diagnostics(ctx, args):
          # For now, just skip it to avoid build failures.
          return
 +    # REAPI rejects output paths containing parent-directory components.
