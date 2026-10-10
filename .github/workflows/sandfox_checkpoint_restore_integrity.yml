@@ -58,15 +58,19 @@ jobs:
 
           TARGET="$(ninja -C "${OUT}" -t targets all | awk -F': ' '$1 ~ /^obj[/].*[.]o$/ && !found { print $1; found=1 }')"
           [[ -n "${TARGET}" ]] || { echo "ERROR: no object target found"; exit 1; }
+          printf '%s\n' "${TARGET}" > "${RUNNER_TEMP}/checkpoint-target.txt"
+          echo "Selected object target: ${TARGET}"
           COMPILE_LOG="${RUNNER_TEMP}/checkpoint-compile.log"
           set -o pipefail
           autoninja -C "${OUT}" -j 1 -re_cache_enable_read=false --strict_remote "${TARGET}" 2>&1 | tee "${COMPILE_LOG}"
           grep -E 'remote:[1-9][0-9]*' "${COMPILE_LOG}"
 
-          echo "=== create timestamp-preserving GN output checkpoint ==="
-          tar --format=pax -cf "${RUNNER_TEMP}/sandfox-gn-output.tar" -C "${SRC}/out" afterbird_production
-          sha256sum "${RUNNER_TEMP}/sandfox-gn-output.tar"
-          du -sh "${RUNNER_TEMP}/sandfox-gn-output.tar"
+          echo "=== create timestamp-preserving compressed GN output checkpoint ==="
+          command -v zstd || { echo "ERROR: zstd is required for checkpoint compression"; exit 2; }
+          tar --format=pax -cf - -C "${SRC}/out" afterbird_production | zstd -3 -T0 -o "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
+          sha256sum "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
+          stat --printf='checkpoint_compressed_bytes=%s\n' "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
+          du -sh "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
           echo "checkpoint_create_complete=true"
 
       - name: Upload checkpoint and provenance
@@ -74,9 +78,10 @@ jobs:
         with:
           name: sandfox-gn-output-checkpoint
           path: |
-            ${{ runner.temp }}/sandfox-gn-output.tar
+            ${{ runner.temp }}/sandfox-gn-output.tar.zst
             ${{ runner.temp }}/checkpoint-create.log
             ${{ runner.temp }}/checkpoint-compile.log
+            ${{ runner.temp }}/checkpoint-target.txt
           if-no-files-found: error
           retention-days: 1
 
@@ -116,6 +121,7 @@ jobs:
           command -v gclient
           command -v gn
           command -v rsync
+          command -v zstd
 
           export AFTERBIRD_CHROMIUM_WORKDIR="${RUNNER_TEMP}/afterbird-chromium"
           export AFTERBIRD_REMOTE_EXEC=1
@@ -131,8 +137,8 @@ jobs:
           ACTUAL_TAG="$(git -C "${SRC}" describe --tags --exact-match)"
           [[ "${ACTUAL_TAG}" == "${EXPECTED_TAG}" ]] || { echo "ERROR: unexpected Chromium tag ${ACTUAL_TAG}"; exit 1; }
 
-          echo "=== restore output checkpoint ==="
-          tar --format=pax -xf "${RUNNER_TEMP}/checkpoint/sandfox-gn-output.tar" -C "${SRC}/out"
+          echo "=== restore compressed output checkpoint ==="
+          zstd -dc "${RUNNER_TEMP}/checkpoint/sandfox-gn-output.tar.zst" | tar --format=pax -xf - -C "${SRC}/out"
           test -f "${OUT}/args.gn"
           grep -q 'use_remoteexec = true' "${OUT}/args.gn"
           grep -q 'use_siso = true' "${OUT}/args.gn"
@@ -140,9 +146,11 @@ jobs:
           sha256sum "${OUT}/args.gn"
           find "${OUT}" -type f \( -name '.siso_fs_state.journal' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
           ninja -C "${OUT}" -t targets all >/dev/null
-          echo "=== incremental validation: same bounded object target ==="
-          TARGET="$(ninja -C "${OUT}" -t targets all | awk -F': ' '$1 ~ /^obj[/].*[.]o$/ && !found { print $1; found=1 }')"
-          [[ -n "${TARGET}" ]] || { echo "ERROR: no object target found after restore"; exit 1; }
+          echo "=== incremental validation: original bounded object target ==="
+          TARGET="$(cat "${RUNNER_TEMP}/checkpoint/checkpoint-target.txt")"
+          [[ -n "${TARGET}" ]] || { echo "ERROR: checkpoint target provenance is empty"; exit 1; }
+          ninja -C "${OUT}" -t targets all | grep -Fqx "${TARGET}" || { echo "ERROR: original target is absent from regenerated GN graph: ${TARGET}"; exit 1; }
+          echo "Selected original object target: ${TARGET}"
           COMPILE_LOG="${RUNNER_TEMP}/checkpoint-incremental.log"
           set -o pipefail
           autoninja -C "${OUT}" -j 1 --strict_remote "${TARGET}" 2>&1 | tee "${COMPILE_LOG}"
