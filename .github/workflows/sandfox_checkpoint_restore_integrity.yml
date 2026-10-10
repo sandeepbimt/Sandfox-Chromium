@@ -62,10 +62,6 @@ jobs:
           [[ -n "${TARGET}" ]] || { echo "ERROR: no object target found"; exit 1; }
           printf '%s\n' "${TARGET}" > "${RUNNER_TEMP}/checkpoint-target.txt"
           echo "Selected object target: ${TARGET}"
-          echo "=== original target dependency query ==="
-          autoninja -C "${OUT}" -t query "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-query-create.txt"
-          echo "=== original target command ==="
-          autoninja -C "${OUT}" -t commands "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-command-create.txt"
           echo "=== target output metadata before checkpoint ==="
           if [[ -e "${OUT}/${TARGET}" ]]; then stat "${OUT}/${TARGET}"; else echo "target_output_missing_before_compile=${TARGET}"; fi
           COMPILE_LOG="${RUNNER_TEMP}/checkpoint-compile.log"
@@ -94,8 +90,6 @@ jobs:
             ${{ runner.temp }}/checkpoint-create.log
             ${{ runner.temp }}/checkpoint-compile.log
             ${{ runner.temp }}/checkpoint-target.txt
-            ${{ runner.temp }}/checkpoint-target-query-create.txt
-            ${{ runner.temp }}/checkpoint-target-command-create.txt
           if-no-files-found: error
           retention-days: 1
 
@@ -166,10 +160,6 @@ jobs:
           [[ -n "${TARGET}" ]] || { echo "ERROR: checkpoint target provenance is empty"; exit 1; }
           ninja -C "${OUT}" -t targets all | awk -F': ' -v target="${TARGET}" '$1 == target { found=1 } END { exit !found }' || { echo "ERROR: original target is absent from regenerated GN graph: ${TARGET}"; exit 1; }
           echo "Selected original object target: ${TARGET}"
-          echo "=== restored target dependency query (before incremental build) ==="
-          autoninja -C "${OUT}" -t query "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-query-restore.txt"
-          echo "=== restored target command (before incremental build) ==="
-          autoninja -C "${OUT}" -t commands "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-command-restore.txt"
           echo "=== restored target output metadata before incremental build ==="
           if [[ -e "${OUT}/${TARGET}" ]]; then stat "${OUT}/${TARGET}"; else echo "target_output_missing_before_incremental=${TARGET}"; fi
           echo "=== restored output inventory ==="
@@ -191,8 +181,6 @@ jobs:
           path: |
             ${{ runner.temp }}/checkpoint-restore.log
             ${{ runner.temp }}/checkpoint-incremental.log
-            ${{ runner.temp }}/checkpoint-target-query-restore.txt
-            ${{ runner.temp }}/checkpoint-target-command-restore.txt
             ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso_output
             ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso.INFO
           if-no-files-found: warn
