@@ -93,7 +93,10 @@ jobs:
             fi
             echo "Compile probe job limit: ${SANDFOX_COMPILE_JOBS}"
             set -o pipefail
-            autoninja -C "${OUT_DIR}" -j "${SANDFOX_COMPILE_JOBS}" "${OBJECT_TARGET}" 2>&1 | tee "${COMPILE_LOG}"
+            # Force cache misses for this bounded probe so remote execution is measured,
+            # not inferred from shared-cache hits. Strict remote prevents local execution
+            # of actions that Siso has configured for remote execution.
+            autoninja -C "${OUT_DIR}" -j "${SANDFOX_COMPILE_JOBS}" -re_cache_enable_read=false --strict_remote "${OBJECT_TARGET}" 2>&1 | tee "${COMPILE_LOG}"
             echo "=== REQUIRE A FRESH REMOTE EXECUTION ==="
             grep -E 'remote:[1-9][0-9]*' "${COMPILE_LOG}"
             echo "=== SANDFOX REAL CHROMIUM REMOTE OBJECT COMPILE CONFIRMED ==="
