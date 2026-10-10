@@ -44,7 +44,7 @@ jobs:
 
           # DEPOT_TOOLS_UPDATE=0 prevents implicit bootstrap; initialize the
           # checkout explicitly before invoking the Chromium GN wrapper.
-          python3 "${DEPOT_TOOLS_DIR}/ensure_bootstrap.py"
+          "${DEPOT_TOOLS_DIR}/ensure_bootstrap"
           command -v gclient
           command -v gn
           command -v rsync
