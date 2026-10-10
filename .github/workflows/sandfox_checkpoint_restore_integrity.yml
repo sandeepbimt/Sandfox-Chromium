@@ -158,6 +158,13 @@ jobs:
           [[ -n "${TARGET}" ]] || { echo "ERROR: checkpoint target provenance is empty"; exit 1; }
           ninja -C "${OUT}" -t targets all | awk -F': ' -v target="${TARGET}" '$1 == target { found=1 } END { exit !found }' || { echo "ERROR: original target is absent from regenerated GN graph: ${TARGET}"; exit 1; }
           echo "Selected original object target: ${TARGET}"
+          echo "=== restored target dependency graph ==="
+          ninja -C "${OUT}" -t query "${TARGET}"
+          echo "=== restored output inventory ==="
+          printf 'object_files='; find "${OUT}/obj" -type f -name '*.o' 2>/dev/null | wc -l
+          printf 'module_files='; find "${OUT}/obj" -type f -name '*.pcm' 2>/dev/null | wc -l
+          if [[ -e "${OUT}/${TARGET}" ]]; then stat "${OUT}/${TARGET}"; else echo "target_output_missing=${TARGET}"; fi
+          echo "=== end restored output inventory ==="
           COMPILE_LOG="${RUNNER_TEMP}/checkpoint-incremental.log"
           set -o pipefail
           autoninja -C "${OUT}" -j 1 -re_cache_enable_read=false --strict_remote "${TARGET}" 2>&1 | tee "${COMPILE_LOG}"
