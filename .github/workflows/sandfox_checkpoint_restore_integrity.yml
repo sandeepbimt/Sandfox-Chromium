@@ -176,7 +176,7 @@ jobs:
           echo "=== APK target dry-run sizing (no build commands executed) ==="
           APK_PLAN_LOG="${RUNNER_TEMP}/chrome-public-apk-dry-run.log"
           set +e
-          autoninja -C "${OUT}" -n chrome_public_apk > "${APK_PLAN_LOG}" 2>&1
+          (cd "${SRC}" && autoninja -C "${OUT}" -n chrome_public_apk) > "${APK_PLAN_LOG}" 2>&1
           APK_PLAN_RC=$?
           set -e
           echo "apk_plan_dry_run_exit_code=${APK_PLAN_RC}"
