@@ -56,7 +56,7 @@ jobs:
           sha256sum "${OUT}/args.gn" "${SRC}/build/config/siso/backend_config/backend.star"
           echo "=== checkpoint sizes ==="
           du -sh "${SRC}" "${OUT}"
-          find "${OUT}" -type f \( -name '.siso_fs_state.journal' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
+          find "${OUT}" -type f \( -name '.siso_fs_state*' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
 
           TARGET="$(ninja -C "${OUT}" -t targets all | awk -F': ' '$1 ~ /^obj[/].*[.]o$/ && !found { print $1; found=1 }')"
           [[ -n "${TARGET}" ]] || { echo "ERROR: no object target found"; exit 1; }
@@ -66,6 +66,8 @@ jobs:
           set -o pipefail
           autoninja -C "${OUT}" -j 1 -re_cache_enable_read=false --strict_remote "${TARGET}" 2>&1 | tee "${COMPILE_LOG}"
           grep -E 'remote:[1-9][0-9]*' "${COMPILE_LOG}"
+          echo "=== Siso state files after bounded compile ==="
+          find "${OUT}" -type f \( -name '.siso_fs_state*' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
 
           echo "=== create timestamp-preserving compressed GN output checkpoint ==="
           command -v zstd || { echo "ERROR: zstd is required for checkpoint compression"; exit 2; }
@@ -149,7 +151,7 @@ jobs:
           grep -q 'use_siso = true' "${OUT}/args.gn"
           echo "=== restored checkpoint identity and state ==="
           sha256sum "${OUT}/args.gn"
-          find "${OUT}" -type f \( -name '.siso_fs_state.journal' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
+          find "${OUT}" -type f \( -name '.siso_fs_state*' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
           ninja -C "${OUT}" -t targets all >/dev/null
           echo "=== incremental validation: original bounded object target ==="
           TARGET="$(cat "${RUNNER_TEMP}/checkpoint/checkpoint-target.txt")"
