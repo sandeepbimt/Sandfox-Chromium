@@ -68,7 +68,8 @@ jobs:
           echo "=== create timestamp-preserving compressed GN output checkpoint ==="
           command -v zstd || { echo "ERROR: zstd is required for checkpoint compression"; exit 2; }
           tar --format=pax -cf - -C "${SRC}/out" afterbird_production | zstd -3 -T0 -o "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
-          sha256sum "${RUNNER_TEMP}/sandfox-gn-output.tar.zst" | tee "${RUNNER_TEMP}/sandfox-gn-output.tar.zst.sha256"
+          (cd "${RUNNER_TEMP}" && sha256sum sandfox-gn-output.tar.zst > sandfox-gn-output.tar.zst.sha256)
+          cat "${RUNNER_TEMP}/sandfox-gn-output.tar.zst.sha256"
           stat --printf='checkpoint_compressed_bytes=%s\n' "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
           du -sh "${RUNNER_TEMP}/sandfox-gn-output.tar.zst"
           echo "checkpoint_create_complete=true"
