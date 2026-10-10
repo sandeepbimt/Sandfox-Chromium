@@ -1,0 +1,163 @@
+name: SANDFOX Checkpoint Restore Integrity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create-checkpoint:
+    name: Create bounded GN/Siso checkpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout SANDFOX
+        uses: actions/checkout@v4
+
+      - name: Generate GN graph and compile one remote object
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="${RUNNER_TEMP}/checkpoint-create.log"
+          exec > >(tee -a "${LOG}") 2>&1
+          df -h /
+          FREE_BYTES="$(df -PB1 / | awk 'NR == 2 {print $4}')"
+          (( FREE_BYTES >= 40 * 1024 * 1024 * 1024 )) || { echo "STOP: less than 40 GiB free before sync"; exit 78; }
+
+          DEPOT_TOOLS_DIR="${RUNNER_TEMP}/depot_tools"
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "${DEPOT_TOOLS_DIR}"
+          export PATH="${DEPOT_TOOLS_DIR}:${PATH}"
+          export DEPOT_TOOLS_UPDATE=0
+          "${DEPOT_TOOLS_DIR}/ensure_bootstrap"
+          command -v gclient
+          command -v gn
+          command -v rsync
+
+          export AFTERBIRD_CHROMIUM_WORKDIR="${RUNNER_TEMP}/afterbird-chromium"
+          export AFTERBIRD_REMOTE_EXEC=1
+          export AFTERBIRD_GCLIENT_RETRIES=1
+          export AFTERBIRD_FETCH_RETRIES=2
+          START="$(date +%s)"
+          bash ci/chromium_android_pipeline.sh
+          echo "create_gn_elapsed_seconds=$(( $(date +%s) - START ))"
+
+          SRC="${AFTERBIRD_CHROMIUM_WORKDIR}/src"
+          OUT="${SRC}/out/afterbird_production"
+          echo "=== checkpoint source identity ==="
+          git -C "${SRC}" rev-parse HEAD
+          git -C "${SRC}" describe --tags --exact-match
+          git -C "${SRC}" status --short
+          sha256sum "${OUT}/args.gn" "${SRC}/build/config/siso/backend_config/backend.star" 2>/dev/null || true
+          echo "=== checkpoint sizes ==="
+          du -sh "${SRC}" "${OUT}"
+          find "${OUT}" -type f \( -name '.siso_fs_state.journal' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
+
+          TARGET="$(ninja -C "${OUT}" -t targets all | awk -F': ' '$1 ~ /^obj[/].*[.]o$/ && !found { print $1; found=1 }')"
+          [[ -n "${TARGET}" ]] || { echo "ERROR: no object target found"; exit 1; }
+          COMPILE_LOG="${RUNNER_TEMP}/checkpoint-compile.log"
+          set -o pipefail
+          autoninja -C "${OUT}" -j 1 -re_cache_enable_read=false --strict_remote "${TARGET}" 2>&1 | tee "${COMPILE_LOG}"
+          grep -E 'remote:[1-9][0-9]*' "${COMPILE_LOG}"
+
+          echo "=== create timestamp-preserving GN output checkpoint ==="
+          tar --format=pax -cf "${RUNNER_TEMP}/sandfox-gn-output.tar" -C "${SRC}/out" afterbird_production
+          sha256sum "${RUNNER_TEMP}/sandfox-gn-output.tar"
+          du -sh "${RUNNER_TEMP}/sandfox-gn-output.tar"
+          echo "checkpoint_create_complete=true"
+
+      - name: Upload checkpoint and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandfox-gn-output-checkpoint
+          path: |
+            ${{ runner.temp }}/sandfox-gn-output.tar
+            ${{ runner.temp }}/checkpoint-create.log
+            ${{ runner.temp }}/checkpoint-compile.log
+          if-no-files-found: error
+          retention-days: 1
+
+  restore-checkpoint:
+    name: Restore on fresh runner and validate incremental target
+    needs: create-checkpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout same SANDFOX revision
+        uses: actions/checkout@v4
+
+      - name: Download checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: sandfox-gn-output-checkpoint
+          path: ${{ runner.temp }}/checkpoint
+
+      - name: Recreate pinned Chromium workspace and validate restore
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="${RUNNER_TEMP}/checkpoint-restore.log"
+          exec > >(tee -a "${LOG}") 2>&1
+          df -h /
+          FREE_BYTES="$(df -PB1 / | awk 'NR == 2 {print $4}')"
+          (( FREE_BYTES >= 40 * 1024 * 1024 * 1024 )) || { echo "STOP: less than 40 GiB free before sync"; exit 78; }
+
+          DEPOT_TOOLS_DIR="${RUNNER_TEMP}/depot_tools"
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "${DEPOT_TOOLS_DIR}"
+          export PATH="${DEPOT_TOOLS_DIR}:${PATH}"
+          export DEPOT_TOOLS_UPDATE=0
+          "${DEPOT_TOOLS_DIR}/ensure_bootstrap"
+          command -v gclient
+          command -v gn
+          command -v rsync
+
+          export AFTERBIRD_CHROMIUM_WORKDIR="${RUNNER_TEMP}/afterbird-chromium"
+          export AFTERBIRD_REMOTE_EXEC=1
+          export AFTERBIRD_GCLIENT_RETRIES=1
+          export AFTERBIRD_FETCH_RETRIES=2
+          START="$(date +%s)"
+          bash ci/chromium_android_pipeline.sh
+          echo "restore_runner_gn_elapsed_seconds=$(( $(date +%s) - START ))"
+
+          SRC="${AFTERBIRD_CHROMIUM_WORKDIR}/src"
+          OUT="${SRC}/out/afterbird_production"
+          EXPECTED_TAG="151.0.7922.38"
+          ACTUAL_TAG="$(git -C "${SRC}" describe --tags --exact-match)"
+          [[ "${ACTUAL_TAG}" == "${EXPECTED_TAG}" ]] || { echo "ERROR: unexpected Chromium tag ${ACTUAL_TAG}"; exit 1; }
+
+          echo "=== restore output checkpoint ==="
+          tar --format=pax -xf "${RUNNER_TEMP}/checkpoint/sandfox-gn-output.tar" -C "${SRC}/out"
+          test -f "${OUT}/args.gn"
+          grep -q 'use_remoteexec = true' "${OUT}/args.gn"
+          grep -q 'use_siso = true' "${OUT}/args.gn"
+          echo "=== restored checkpoint identity and state ==="
+          sha256sum "${OUT}/args.gn"
+          find "${OUT}" -type f \( -name '.siso_fs_state.journal' -o -name 'siso.INFO' -o -name 'siso_output' \) -exec du -sh {} + 2>/dev/null || true
+          ninja -C "${OUT}" -t targets all >/dev/null
+          echo "=== incremental validation: same bounded object target ==="
+          TARGET="$(ninja -C "${OUT}" -t targets all | awk -F': ' '$1 ~ /^obj[/].*[.]o$/ && !found { print $1; found=1 }')"
+          [[ -n "${TARGET}" ]] || { echo "ERROR: no object target found after restore"; exit 1; }
+          COMPILE_LOG="${RUNNER_TEMP}/checkpoint-incremental.log"
+          set -o pipefail
+          autoninja -C "${OUT}" -j 1 --strict_remote "${TARGET}" 2>&1 | tee "${COMPILE_LOG}"
+          echo "=== checkpoint restore validation complete ==="
+          echo "NOTE: incremental success proves the restored output is usable; it does not by itself prove a full APK can be resumed."
+
+      - name: Preserve restore diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandfox-checkpoint-restore-log
+          path: |
+            ${{ runner.temp }}/checkpoint-restore.log
+            ${{ runner.temp }}/checkpoint-incremental.log
+            ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso_output
+            ${{ runner.temp }}/afterbird-chromium/src/out/afterbird_production/siso.INFO
+          if-no-files-found: warn
+          retention-days: 7
