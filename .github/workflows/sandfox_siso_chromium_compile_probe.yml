@@ -37,8 +37,9 @@ jobs:
           export PATH="$DEPOT_TOOLS_DIR:$PATH"
           export DEPOT_TOOLS_UPDATE=0
 
-          mkdir -p chromium
-          cd chromium
+          CHROMIUM_DIR="$(mktemp -d)/chromium"
+          mkdir -p "$CHROMIUM_DIR"
+          cd "$CHROMIUM_DIR"
 
           git init -q
           git remote add origin https://chromium.googlesource.com/chromium/src.git
