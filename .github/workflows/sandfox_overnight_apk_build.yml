@@ -1,0 +1,109 @@
+name: SANDFOX Overnight APK Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build SANDFOX APK with Siso remote execution
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout SANDFOX
+        uses: actions/checkout@v4
+
+      - name: Build pinned Chromium APK
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="${RUNNER_TEMP}/sandfox-full-apk-build.log"
+          SUMMARY="${RUNNER_TEMP}/sandfox-apk-build-summary.txt"
+          mkdir -p "${RUNNER_TEMP}"
+          : > "${LOG}"
+          exec > >(tee -a "${LOG}") 2>&1
+
+          echo "=== SANDFOX FULL APK BUILD ==="
+          date -u '+started_utc=%Y-%m-%dT%H:%M:%SZ'
+          df -h /
+          FREE_BYTES="$(df -PB1 / | awk 'NR == 2 {print $4}')"
+          MIN_FREE_BYTES=$((40 * 1024 * 1024 * 1024))
+          echo "free_bytes_before_sync=${FREE_BYTES}"
+          if [[ "${FREE_BYTES}" -lt "${MIN_FREE_BYTES}" ]]; then
+            echo "STOP: less than 40 GiB free; Chromium dependency sync not started."
+            exit 78
+          fi
+
+          DEPOT_TOOLS_DIR="${RUNNER_TEMP}/depot_tools"
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "${DEPOT_TOOLS_DIR}"
+          export PATH="${DEPOT_TOOLS_DIR}:${PATH}"
+          export DEPOT_TOOLS_UPDATE=0
+          "${DEPOT_TOOLS_DIR}/ensure_bootstrap"
+          command -v gclient
+          command -v gn
+          command -v autoninja
+          command -v rsync
+
+          export AFTERBIRD_CHROMIUM_WORKDIR="${RUNNER_TEMP}/afterbird-chromium"
+          export AFTERBIRD_REMOTE_EXEC=1
+          export AFTERBIRD_GCLIENT_RETRIES=1
+          export AFTERBIRD_FETCH_RETRIES=2
+          export AFTERBIRD_ARGS_VARIANT=test
+
+          START="$(date +%s)"
+          set +e
+          bash ci/chromium_android_pipeline.sh --full-build --target chrome_public_apk
+          BUILD_RC=$?
+          set -e
+          ELAPSED="$(( $(date +%s) - START ))"
+          SRC="${AFTERBIRD_CHROMIUM_WORKDIR}/src"
+          OUT="${SRC}/out/afterbird_production"
+          {
+            echo "build_exit_code=${BUILD_RC}"
+            echo "build_elapsed_seconds=${ELAPSED}"
+            echo "chromium_tag_expected=151.0.7922.38"
+            if [[ -d "${SRC}/.git" ]]; then
+              echo "chromium_commit=$(git -C "${SRC}" rev-parse HEAD)"
+              echo "chromium_tag_actual=$(git -C "${SRC}" describe --tags --exact-match 2>/dev/null || true)"
+            fi
+            echo "=== final disk ==="
+            df -h /
+            echo "=== Siso summary lines ==="
+            if [[ -f "${OUT}/siso_output" ]]; then
+              grep -E 'Build (Succeeded|Failed):|local:[0-9]+ remote:[0-9]+ cache:[0-9]+|fallback:[0-9]+ retry:[0-9]+' "${OUT}/siso_output" | tail -n 30 || true
+            fi
+            echo "=== APK files ==="
+            find "${OUT}" -type f -name '*.apk' -printf '%p %s bytes\n' 2>/dev/null || true
+          } > "${SUMMARY}"
+
+          cat "${SUMMARY}"
+          mkdir -p "${RUNNER_TEMP}/sandfox-apk-output"
+          if [[ "${BUILD_RC}" -eq 0 ]]; then
+            mapfile -t APKS < <(find "${OUT}/apks" -maxdepth 1 -type f -name '*.apk' -print 2>/dev/null | sort)
+            if [[ "${#APKS[@]}" -eq 0 ]]; then
+              echo "ERROR: build command succeeded but no APK was found under ${OUT}/apks."
+              exit 1
+            fi
+            cp "${APKS[@]}" "${RUNNER_TEMP}/sandfox-apk-output/"
+            echo "apk_artifact_count=${#APKS[@]}" >> "${SUMMARY}"
+          else
+            tail -n 2000 "${LOG}" > "${RUNNER_TEMP}/sandfox-apk-build-failure-tail.log"
+            exit "${BUILD_RC}"
+          fi
+
+      - name: Upload APK and compact build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandfox-android-apk
+          path: |
+            ${{ runner.temp }}/sandfox-apk-output/*.apk
+            ${{ runner.temp }}/sandfox-apk-build-summary.txt
+            ${{ runner.temp }}/sandfox-apk-build-failure-tail.log
+          if-no-files-found: warn
+          retention-days: 7
