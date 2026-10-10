@@ -136,7 +136,7 @@ jobs:
             echo "The compressed stream is counted and discarded; no checkpoint archive is written."
             du -sb "${CHROMIUM_SRC}"
             CHECKPOINT_PROBE_START="$(date +%s)"
-            COMPRESSED_BYTES="$(tar --format=pax -cf - -C "${AFTERBIRD_CHROMIUM_WORKDIR}" src | zstd -3 -T0 -c | awk '{ total += $1 } END { printf "%.0f\n", total }')"
+            COMPRESSED_BYTES="$(tar --format=pax -cf - -C "${AFTERBIRD_CHROMIUM_WORKDIR}" src | zstd -3 -T0 -c | wc -c | tr -d '[:space:]')"
             CHECKPOINT_PROBE_ELAPSED="$(( $(date +%s) - CHECKPOINT_PROBE_START ))"
             echo "checkpoint_stream_compressed_bytes=${COMPRESSED_BYTES}"
             echo "checkpoint_stream_elapsed_seconds=${CHECKPOINT_PROBE_ELAPSED}"
