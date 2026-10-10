@@ -63,9 +63,9 @@ jobs:
           printf '%s\n' "${TARGET}" > "${RUNNER_TEMP}/checkpoint-target.txt"
           echo "Selected object target: ${TARGET}"
           echo "=== original target dependency query ==="
-          ninja -C "${OUT}" -t query "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-query-create.txt"
+          autoninja -C "${OUT}" -t query "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-query-create.txt"
           echo "=== original target command ==="
-          ninja -C "${OUT}" -t commands "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-command-create.txt"
+          autoninja -C "${OUT}" -t commands "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-command-create.txt"
           echo "=== target output metadata before checkpoint ==="
           if [[ -e "${OUT}/${TARGET}" ]]; then stat "${OUT}/${TARGET}"; else echo "target_output_missing_before_compile=${TARGET}"; fi
           COMPILE_LOG="${RUNNER_TEMP}/checkpoint-compile.log"
@@ -167,9 +167,9 @@ jobs:
           ninja -C "${OUT}" -t targets all | awk -F': ' -v target="${TARGET}" '$1 == target { found=1 } END { exit !found }' || { echo "ERROR: original target is absent from regenerated GN graph: ${TARGET}"; exit 1; }
           echo "Selected original object target: ${TARGET}"
           echo "=== restored target dependency query (before incremental build) ==="
-          ninja -C "${OUT}" -t query "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-query-restore.txt"
+          autoninja -C "${OUT}" -t query "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-query-restore.txt"
           echo "=== restored target command (before incremental build) ==="
-          ninja -C "${OUT}" -t commands "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-command-restore.txt"
+          autoninja -C "${OUT}" -t commands "${TARGET}" | tee "${RUNNER_TEMP}/checkpoint-target-command-restore.txt"
           echo "=== restored target output metadata before incremental build ==="
           if [[ -e "${OUT}/${TARGET}" ]]; then stat "${OUT}/${TARGET}"; else echo "target_output_missing_before_incremental=${TARGET}"; fi
           echo "=== restored output inventory ==="
