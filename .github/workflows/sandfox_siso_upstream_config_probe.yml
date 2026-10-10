@@ -68,6 +68,8 @@ jobs:
           HELPER
           chmod 700 "${CHROMIUM_DIR}/buildbuddy-credential-helper"
 
+          mkdir -p "${CHROMIUM_DIR}/build/config/siso/backend_config"
+
           echo "=== UPSTREAM configure_siso.py ==="
           python3 "${CHROMIUM_DIR}/build/config/siso/configure_siso.py"             --reapi_instance default             --reapi_address remote.buildbuddy.io:443             --reapi_backend_config_path "${CHROMIUM_DIR}/sandfox-buildbuddy-backend.star"             --credential-helper "${CHROMIUM_DIR}/buildbuddy-credential-helper"
           cat "${CHROMIUM_DIR}/build/config/siso/.sisoenv"
