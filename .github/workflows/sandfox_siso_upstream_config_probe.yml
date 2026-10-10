@@ -1,0 +1,129 @@
+name: SANDFOX Siso Upstream Config Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  siso-upstream-config:
+    name: Chromium configure_siso.py + BuildBuddy compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout SANDFOX configuration
+        uses: actions/checkout@v4
+
+      - name: Configure and run a fresh Chromium compile action
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          test -n "${BUILDBUDDY_API_KEY}" || {
+            echo "BUILDBUDDY_API_KEY GitHub secret is missing."
+            exit 1
+          }
+
+          DEPOT_TOOLS_DIR="${RUNNER_TEMP}/depot_tools"
+          CHROMIUM_DIR="${RUNNER_TEMP}/chromium"
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "${DEPOT_TOOLS_DIR}"
+          export PATH="${DEPOT_TOOLS_DIR}:${PATH}"
+          export DEPOT_TOOLS_UPDATE=0
+
+          mkdir -p "${CHROMIUM_DIR}"
+          git -C "${CHROMIUM_DIR}" init -q
+          git -C "${CHROMIUM_DIR}" remote add origin https://chromium.googlesource.com/chromium/src.git
+          git -C "${CHROMIUM_DIR}" -c protocol.version=2 fetch --depth 1 --filter=blob:none origin refs/tags/151.0.7922.38
+          git -C "${CHROMIUM_DIR}" sparse-checkout init --no-cone
+          git -C "${CHROMIUM_DIR}" sparse-checkout set --no-cone /base/compiler_specific.h /build/build_config.h /build/buildflag.h /build/config/siso/configure_siso.py
+          git -C "${CHROMIUM_DIR}" checkout -q FETCH_HEAD
+
+          echo "=== PINNED CHROMIUM ==="
+          git -C "${CHROMIUM_DIR}" rev-parse HEAD
+          du -sh "${CHROMIUM_DIR}"
+
+          mkdir -p "${CHROMIUM_DIR}/siso"
+          cipd install build/siso/linux-amd64 -root "${CHROMIUM_DIR}/siso"
+          "${CHROMIUM_DIR}/siso/siso" version
+
+          cp "${GITHUB_WORKSPACE}/ci/siso/buildbuddy_backend.star" "${CHROMIUM_DIR}/sandfox-buildbuddy-backend.star"
+
+          cat > "${CHROMIUM_DIR}/buildbuddy-credential-helper" <<'HELPER'
+          #!/usr/bin/env python3
+          import json
+          import os
+          import sys
+
+          if len(sys.argv) < 2 or sys.argv[1] != "get":
+              raise SystemExit(1)
+
+          sys.stdin.read()
+          print(json.dumps({
+              "headers": {
+                  "x-buildbuddy-api-key": [os.environ["BUILDBUDDY_API_KEY"]],
+              }
+          }))
+          HELPER
+          chmod 700 "${CHROMIUM_DIR}/buildbuddy-credential-helper"
+
+          echo "=== UPSTREAM configure_siso.py ==="
+          python3 "${CHROMIUM_DIR}/build/config/siso/configure_siso.py"             --reapi_instance default             --reapi_address remote.buildbuddy.io:443             --reapi_backend_config_path "${CHROMIUM_DIR}/sandfox-buildbuddy-backend.star"             --credential-helper "${CHROMIUM_DIR}/buildbuddy-credential-helper"
+          cat "${CHROMIUM_DIR}/build/config/siso/.sisoenv"
+          test -f "${CHROMIUM_DIR}/build/config/siso/backend_config/backend.star"
+
+          cat > "${CHROMIUM_DIR}/build/config/siso/main.star" <<'STAR'
+          load("@builtin//encoding.star", "json")
+          load("@builtin//struct.star", "module")
+
+          def init(ctx):
+              return module(
+                  "config",
+                  step_config = json.encode({
+                      "platforms": {
+                          "default": {
+                              "OSFamily": "Linux",
+                          },
+                      },
+                      "rules": [
+                          {
+                              "name": "sandfox_upstream_config_probe",
+                              "action": "^sandfox_upstream_config_probe$",
+                              "remote": True,
+                          },
+                      ],
+                  }),
+                  filegroups = {},
+                  handlers = {},
+              )
+          STAR
+
+          cat > "${CHROMIUM_DIR}/sandfox_upstream_config_probe.cc" <<'CPP'
+          #include "base/compiler_specific.h"
+
+          ALWAYS_INLINE int SandfoxUpstreamConfigProbe(int value) {
+            return value + 3;
+          }
+
+          int main() {
+            return SandfoxUpstreamConfigProbe(41) == 44 ? 0 : 1;
+          }
+          CPP
+
+          cat > "${CHROMIUM_DIR}/build.ninja" <<'NINJA'
+          rule sandfox_upstream_config_probe
+            command = clang++ -std=c++20 -I. -c sandfox_upstream_config_probe.cc -o sandfox_upstream_config_probe.o
+            description = SANDFOX upstream-config Chromium compile probe
+
+          build sandfox_upstream_config_probe.o: sandfox_upstream_config_probe sandfox_upstream_config_probe.cc base/compiler_specific.h build/build_config.h build/buildflag.h
+          default sandfox_upstream_config_probe.o
+          NINJA
+
+          echo "=== SISO BUILD USING UPSTREAM CONFIGURATION ==="
+          set -o pipefail
+          "${CHROMIUM_DIR}/siso/siso" ninja --strict_remote --verbose_failures -C "${CHROMIUM_DIR}" sandfox_upstream_config_probe.o 2>&1 | tee "${CHROMIUM_DIR}/siso.log"
+
+          test -f "${CHROMIUM_DIR}/sandfox_upstream_config_probe.o"
+          grep -E "remote:[1-9]" "${CHROMIUM_DIR}/siso.log"
+          echo "=== SANDFOX UPSTREAM CONFIG REMOTE COMPILE CONFIRMED ==="
