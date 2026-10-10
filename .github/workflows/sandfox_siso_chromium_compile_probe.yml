@@ -64,11 +64,11 @@ jobs:
           #include "base/compiler_specific.h"
 
           ALWAYS_INLINE int SandfoxProbe(int value) {
-            return value + 1;
+            return value + 2;
           }
 
           int main() {
-            return SandfoxProbe(41) == 42 ? 0 : 1;
+            return SandfoxProbe(41) == 43 ? 0 : 1;
           }
           CPP
 
@@ -169,4 +169,4 @@ jobs:
           printf '%s\n' "${LOG}"
 
           printf '%s\n' "${LOG}" | grep -F "SANDFOX REAL CHROMIUM REMOTE COMPILE CONFIRMED"
-          printf '%s\n' "${LOG}" | grep -E "(remote:[1-9]|cache:[1-9])"
+          printf '%s\n' "${LOG}" | grep -E "remote:[1-9]"
