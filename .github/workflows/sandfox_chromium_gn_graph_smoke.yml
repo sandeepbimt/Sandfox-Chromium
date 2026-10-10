@@ -70,7 +70,7 @@ jobs:
             OUT_DIR="${CHROMIUM_SRC}/out/afterbird_production"
             COMPILE_LOG="${RUNNER_TEMP}/sandfox-remote-compile-probe.log"
             echo "=== SELECT ONE GENERATED CHROMIUM OBJECT TARGET ==="
-            OBJECT_TARGET="$(ninja -C "${OUT_DIR}" -t targets all | awk -F': ' '$1 ~ /^obj\\/.*\\.o$/ && !found { print $1; found=1 }')"
+            OBJECT_TARGET="$(ninja -C "${OUT_DIR}" -t targets all | awk -F': ' '$1 ~ /^obj[/].*[.]o$/ && !found { print $1; found=1 }')"
             if [[ -z "${OBJECT_TARGET}" ]]; then
               echo "ERROR: GN generated no object-file targets to probe."
               exit 1
