@@ -2,6 +2,12 @@ name: SANDFOX Chromium GN Graph Smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      compile_probe:
+        description: "After GN succeeds, compile one real Chromium object and require remote execution"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -19,6 +25,7 @@ jobs:
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
           RUNNER_TEMP: ${{ runner.temp }}
+          SANDFOX_COMPILE_PROBE: ${{ inputs.compile_probe }}
         shell: bash
         run: |
           set -euo pipefail
@@ -57,6 +64,27 @@ jobs:
 
           echo "=== RUNNING PRODUCTION PIPELINE SMOKE PATH (NO APK COMPILE) ==="
           bash ci/chromium_android_pipeline.sh
+
+          if [[ "${SANDFOX_COMPILE_PROBE}" == "true" ]]; then
+            CHROMIUM_SRC="${AFTERBIRD_CHROMIUM_WORKDIR}/src"
+            OUT_DIR="${CHROMIUM_SRC}/out/afterbird_production"
+            COMPILE_LOG="${RUNNER_TEMP}/sandfox-remote-compile-probe.log"
+            echo "=== SELECT ONE GENERATED CHROMIUM OBJECT TARGET ==="
+            OBJECT_TARGET="$(ninja -C "${OUT_DIR}" -t targets all | awk -F': ' '$1 ~ /^obj\/.*\.o$/ { print $1; exit }')"
+            if [[ -z "${OBJECT_TARGET}" ]]; then
+              echo "ERROR: GN generated no object-file targets to probe."
+              exit 1
+            fi
+            echo "Selected object target: ${OBJECT_TARGET}"
+            echo "=== COMPILE ONE REAL OBJECT THROUGH THE PRODUCTION SISO CONFIG ==="
+            set -o pipefail
+            autoninja -C "${OUT_DIR}" -j 1 "${OBJECT_TARGET}" 2>&1 | tee "${COMPILE_LOG}"
+            echo "=== REQUIRE A FRESH REMOTE EXECUTION ==="
+            grep -E 'remote:[1-9][0-9]*' "${COMPILE_LOG}"
+            echo "=== SANDFOX REAL CHROMIUM REMOTE OBJECT COMPILE CONFIRMED ==="
+          else
+            echo "Compile probe disabled; GN graph only."
+          fi
 
           echo "=== GN GRAPH SMOKE PASSED ==="
           echo "Verified: pinned Chromium checkout, dependency sync, SANDFOX patches, upstream Siso/BuildBuddy configuration, gn gen, and chrome_public_apk dependency graph."
