@@ -404,12 +404,13 @@ jobs:
             cp "$OUT_DIR/apks/ChromePublic.apk" \
               "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
 
-      - save_cache:
-          name: Save resumable Siso build checkpoint, including on build timeout
-          key: sandfox-aerium-v1-{{ .Branch }}-{{ .BuildNum }}
-          paths:
-            - /home/circleci/afterbird-chromium/src/out/afterbird_production
-          when: always
+      - when: always
+        steps:
+          - save_cache:
+              name: Save resumable Siso build checkpoint, including on build timeout
+              key: sandfox-aerium-v1-{{ .Branch }}-{{ .BuildNum }}
+              paths:
+                - /home/circleci/afterbird-chromium/src/out/afterbird_production
 
       - run:
           name: Capture Siso failure diagnostics
