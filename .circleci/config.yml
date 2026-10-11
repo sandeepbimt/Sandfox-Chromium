@@ -417,12 +417,14 @@ jobs:
             # Intentionally return success here. A final step reports BUILD_STATUS
             # only after the resumable output cache and diagnostics have been handled.
             exit 0
+          teardown:
+            - save_cache:
+                name: Save resumable Siso checkpoint on failure or cancellation
+                key: sandfox-aerium-v1-{{ .Branch }}-{{ .BuildNum }}
+                paths:
+                  - /home/circleci/afterbird-chromium/src/out/afterbird_production
 
-      - save_cache:
-          name: Save resumable Siso build checkpoint before reporting build failure
-          key: sandfox-aerium-v1-{{ .Branch }}-{{ .BuildNum }}
-          paths:
-            - /home/circleci/afterbird-chromium/src/out/afterbird_production
+
 
       - run:
           name: Capture Siso failure diagnostics
