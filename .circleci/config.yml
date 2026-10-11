@@ -8,6 +8,11 @@ jobs:
     steps:
       - checkout
 
+      - restore_cache:
+          name: Restore previous Aerium-style Siso checkpoint
+          keys:
+            - sandfox-aerium-v1-{{ .Branch }}-
+
       - run:
           name: Measure build VM
           command: |
@@ -233,6 +238,22 @@ jobs:
             cat "$SRC_DIR/build/config/siso/.sisorc"
 
       - run:
+          name: Normalize source timestamps for cross-run Siso continuation
+          command: |
+            set -euo pipefail
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            test -d "$SRC_DIR"
+            # The Chromium tag, dependency revisions and Afterbird patches are pinned.
+            # Normalize input mtimes identically on each fresh runner so restoring the
+            # prior output checkpoint does not make every source look newer than it.
+            find "$SRC_DIR" \
+              -path "$SRC_DIR/.git" -prune -o \
+              -path "$SRC_DIR/out" -prune -o \
+              -type f -exec touch -h -d '@946684800' {} +
+            echo "=== Stable source timestamps applied ==="
+            stat -c '%y %n' "$SRC_DIR/build/config/compiler/compiler.gni"
+
+      - run:
           name: Generate release GN configuration
           command: |
             set -eux
@@ -272,6 +293,56 @@ jobs:
             else
               find "$SRC_DIR/buildtools" -maxdepth 4 -type f -name siso -print 2>/dev/null | head -n 10
             fi
+
+      - restore_cache:
+          name: Restore prior compiled output and Siso filesystem state
+          keys:
+            - sandfox-aerium-v1-{{ .Branch }}-
+
+      - run:
+          name: Validate restored checkpoint identity
+          command: |
+            set -euo pipefail
+            SRC_DIR="$HOME/afterbird-chromium/src"
+            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            DELTA_DIR="$HOME/afterbird-delta"
+            MARKER="$OUT_DIR/.sandfox-checkpoint-identity"
+
+            checkpoint_identity() {
+              {
+                printf '%s\n' 'chromium_tag=151.0.7922.38'
+                printf '%s\n' 'afterbird_sha=5ff224f9ef8f8a0792abd2babc9f7164e8dcdb3e'
+                sha256sum "$DELTA_DIR/.build/args/release.gn"
+                sha256sum "$SRC_DIR/build/config/compiler/compiler.gni"
+                sha256sum "$SRC_DIR/build/config/siso/.sisorc"
+                sha256sum "$SRC_DIR/build/config/siso/backend_config/backend.star"
+                find "$CIRCLE_WORKING_DIRECTORY/patches/m151" -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum
+                find "$CIRCLE_WORKING_DIRECTORY/chrome/android/java/res_chromium_base" -type f -print0 | sort -z | xargs -0 sha256sum
+              } | sha256sum | awk '{print $1}'
+            }
+
+            EXPECTED="$(checkpoint_identity)"
+            if [ -f "$MARKER" ]; then
+              ACTUAL="$(cat "$MARKER")"
+              if [ "$ACTUAL" != "$EXPECTED" ]; then
+                echo "Checkpoint identity mismatch; discarding stale output state."
+                rm -rf "$OUT_DIR"
+                mkdir -p "$OUT_DIR"
+                cp "$DELTA_DIR/.build/args/release.gn" "$OUT_DIR/args.gn"
+                printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$OUT_DIR/args.gn"
+                cd "$SRC_DIR"
+                gn gen "$OUT_DIR"
+              else
+                echo "Checkpoint identity verified; retaining restored Siso/Ninja state."
+              fi
+            else
+              echo "No prior checkpoint marker; retaining newly generated GN output."
+            fi
+            printf '%s\n' "$EXPECTED" > "$MARKER"
+            echo "checkpoint_identity=$EXPECTED"
+            echo "=== Restored checkpoint state ==="
+            du -sh "$OUT_DIR"
+            stat -c '%y %n' "$OUT_DIR/build.ninja" "$OUT_DIR/.siso_fs_state" 2>/dev/null || true
 
       - run:
           name: Preflight Chromium Android dependency graph
@@ -337,6 +408,13 @@ jobs:
             mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
             cp "$OUT_DIR/apks/ChromePublic.apk" \
               "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
+
+      - save_cache:
+          name: Save resumable Siso build checkpoint, including on build timeout
+          key: sandfox-aerium-v1-{{ .Branch }}-{{ .BuildNum }}
+          paths:
+            - /home/circleci/afterbird-chromium/src/out/afterbird_production
+          when: always
 
       - run:
           name: Capture Siso failure diagnostics
