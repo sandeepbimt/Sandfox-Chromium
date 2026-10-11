@@ -374,11 +374,12 @@ jobs:
       - run:
           name: Build exact Afterbird APK through Siso BuildBuddy
           command: |
-            set -euo pipefail
+            set -uo pipefail
             export PATH="$HOME/depot_tools:$PATH"
             SRC_DIR="$HOME/afterbird-chromium/src"
             OUT_DIR="$SRC_DIR/out/afterbird_production"
             LOG_FILE="$CIRCLE_WORKING_DIRECTORY/sandfox-remote-build.log"
+            STATUS_FILE="$CIRCLE_WORKING_DIRECTORY/.sandfox-build-status"
             export PATH="$SRC_DIR/buildtools/linux64:$PATH"
             cd "$SRC_DIR"
 
@@ -388,31 +389,40 @@ jobs:
             free -h
             echo "=== REMOTE BUILD START ==="
 
-            # Stop before CircleCI's hard 60-minute job limit so failure diagnostics and artifacts can run.
+            # Capture the timeout/failure instead of failing this step immediately.
+            # This lets CircleCI execute save_cache before the job is marked failed.
             timeout --signal=INT --kill-after=30s 36m bash -c 'set -o pipefail; autoninja -C "$1" -j16 chrome_public_apk 2>&1 | tee "$2"' _ "$OUT_DIR" "$LOG_FILE"
+            BUILD_STATUS=$?
 
-            echo "=== REMOTE BUILD PASSED ==="
-            ls -lh "$OUT_DIR/apks/ChromePublic.apk"
+            if [ "$BUILD_STATUS" -eq 0 ]; then
+              if [ ! -f "$OUT_DIR/apks/ChromePublic.apk" ]; then
+                echo "Build returned success but ChromePublic.apk is missing."
+                BUILD_STATUS=1
+              else
+                mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
+                cp "$OUT_DIR/apks/ChromePublic.apk" "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk" || BUILD_STATUS=$?
+              fi
+            fi
+
+            echo "=== REMOTE BUILD EXIT STATUS: $BUILD_STATUS ==="
             echo "=== REMOTE EXECUTION COUNTS ==="
             grep -E 'noexec:[0-9]+ local:[0-9]+ remote:[0-9]+ cache:[0-9]+ skip:[0-9]+' "$LOG_FILE" || true
             echo "=== REMOTE BUILD POST-BUILD DISK ==="
-            df -hT
+            df -hT || true
             echo "=== REMOTE BUILD POST-BUILD RAM ==="
-            free -h
+            free -h || true
 
-            mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
-            cp "$OUT_DIR/apks/ChromePublic.apk" \
-              "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"
+            printf '%s\n' "$BUILD_STATUS" > "$STATUS_FILE"
+            echo "Build status recorded; allowing checkpoint save and diagnostics to run."
+            # Intentionally return success here. A final step reports BUILD_STATUS
+            # only after the resumable output cache and diagnostics have been handled.
+            exit 0
 
-      - when:
-          condition:
-            equal: [true, true]
-          steps:
-            - save_cache:
-                name: Save resumable Siso build checkpoint, including on build timeout
-                key: sandfox-aerium-v1-{{ .Branch }}-{{ .BuildNum }}
-                paths:
-                  - /home/circleci/afterbird-chromium/src/out/afterbird_production
+      - save_cache:
+          name: Save resumable Siso build checkpoint before reporting build failure
+          key: sandfox-aerium-v1-{{ .Branch }}-{{ .BuildNum }}
+          paths:
+            - /home/circleci/afterbird-chromium/src/out/afterbird_production
 
       - run:
           name: Capture Siso failure diagnostics
@@ -454,6 +464,23 @@ jobs:
       - store_artifacts:
           path: sandfox-remote-build.log
           destination: afterbird-remote/sandfox-remote-build.log
+
+      - run:
+          name: Report build result after checkpoint save
+          when: always
+          command: |
+            set -eu
+            STATUS_FILE="$CIRCLE_WORKING_DIRECTORY/.sandfox-build-status"
+            if [ ! -f "$STATUS_FILE" ]; then
+              echo "Build status file is missing; build result cannot be verified."
+              exit 1
+            fi
+            BUILD_STATUS="$(cat "$STATUS_FILE")"
+            if [ "$BUILD_STATUS" -ne 0 ]; then
+              echo "Reporting original build failure after checkpoint-save attempt: exit $BUILD_STATUS"
+              exit "$BUILD_STATUS"
+            fi
+            echo "Build completed successfully and checkpoint-save step was reached."
 
 workflows:
   c4-afterbird-buildbuddy-remote:
