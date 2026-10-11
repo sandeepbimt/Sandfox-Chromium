@@ -8,11 +8,6 @@ jobs:
     steps:
       - checkout
 
-      - restore_cache:
-          name: Restore previous Aerium-style Siso checkpoint
-          keys:
-            - sandfox-aerium-v1-{{ .Branch }}-
-
       - run:
           name: Measure build VM
           command: |
