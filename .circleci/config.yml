@@ -391,7 +391,7 @@ jobs:
 
             # Capture the timeout/failure instead of failing this step immediately.
             # This lets CircleCI execute save_cache before the job is marked failed.
-            if timeout --signal=INT --kill-after=30s 36m bash -c 'set -o pipefail; autoninja -C "$1" -j16 chrome_public_apk 2>&1 | tee "$2"' _ "$OUT_DIR" "$LOG_FILE"; then
+            if timeout --signal=INT --kill-after=30s 36m bash -c 'set -o pipefail; autoninja -C "$1" -j64 chrome_public_apk 2>&1 | tee "$2"' _ "$OUT_DIR" "$LOG_FILE"; then
               BUILD_STATUS=0
             else
               BUILD_STATUS=$?
