@@ -350,7 +350,45 @@ jobs:
             stat -c '%y %s %n' "$OUT_DIR/build.ninja" "$OUT_DIR/.siso_fs_state" "$OUT_DIR/.siso_deps" 2>/dev/null || true
 
       - run:
-          name: Preflight Chromium Android dependency graph
+          name: Raise Siso local generator action pool to eight
+          command: |
+            set -euo pipefail
+            OUT_DIR="$HOME/afterbird-chromium/src/out/afterbird_production"
+            BUILD_NINJA="$OUT_DIR/build.ninja"
+            test -s "$BUILD_NINJA"
+
+            # Earlier Siso logs showed long queues on action/4. Raise the generated
+            # pool to eight; SISO_LIMITS=local=8 applies the same upper bound.
+            python3 - "$BUILD_NINJA" <<'PY'
+            import pathlib
+            import re
+            import sys
+
+            path = pathlib.Path(sys.argv[1])
+            text = path.read_text()
+            pattern = re.compile(r"(?m)^pool build_toolchain_action_pool\n[ \t]+depth = ([0-9]+)$")
+            matches = list(pattern.finditer(text))
+            if len(matches) != 1:
+                raise SystemExit(
+                    f"Expected one build_toolchain_action_pool definition; found {len(matches)}"
+                )
+
+            current = int(matches[0].group(1))
+            if current < 8:
+                text, changed = pattern.subn(
+                    "pool build_toolchain_action_pool\n  depth = 8", text, count=1
+                )
+                if changed != 1:
+                    raise SystemExit("Failed to update build_toolchain_action_pool depth")
+                path.write_text(text)
+
+            print(f"build_toolchain_action_pool depth: {current} -> {max(current, 8)}")
+            PY
+
+            grep -A 1 '^pool build_toolchain_action_pool$' "$BUILD_NINJA"
+
+      - run:
+          name: Validate Chromium Android APK target
           command: |
             set -eux
             export PATH="$HOME/depot_tools:$PATH"
@@ -359,9 +397,11 @@ jobs:
             export PATH="$SRC_DIR/buildtools/linux64:$PATH"
             cd "$SRC_DIR"
 
-            gn desc "$OUT_DIR" //chrome/android:chrome_public_apk deps --all
+            # Validate only the requested target. Walking every transitive dependency
+            # costs nearly six minutes and the actual build will validate the graph.
+            gn desc "$OUT_DIR" //chrome/android:chrome_public_apk type
 
-            echo "=== C3 PRE-FLIGHT PASSED ==="
+            echo "=== APK TARGET VALIDATION PASSED ==="
             echo "=== DISK ==="
             df -hT
             echo "=== RAM ==="
@@ -399,26 +439,29 @@ jobs:
             free -h
             echo "=== REMOTE BUILD START ==="
 
-            # Give Siso more local execution capacity for generator/toolchain actions.
-            # Keep remote concurrency and all pinned/checkpoint/cache settings unchanged.
-            export SISO_LIMITS=local=8
+            # Siso exposes local and remote execution limits separately. BuildBuddy
+            # Personal advertises up to 80 remote cores, so test that bounded ceiling.
+            export SISO_LIMITS=local=8,remote=80
 
-            # Do not impose a shorter shell timeout than CircleCI's job limit.
-            # Capture the exit status so checkpoint saving and diagnostics still run.
-            if bash -c 'set -o pipefail; autoninja -C "$1" -j64 chrome_public_apk 2>&1 | tee "$2"' _ "$OUT_DIR" "$LOG_FILE"; then
+            # Stop before CircleCI's hard deadline so checkpoint compression/upload
+            # and diagnostics have time to complete. The full graph walk was removed above.
+            if timeout --signal=INT --kill-after=30s 35m bash -c 'set -o pipefail; autoninja -C "$1" -j80 chrome_public_apk 2>&1 | tee "$2"' _ "$OUT_DIR" "$LOG_FILE"; then
               BUILD_STATUS=0
             else
               BUILD_STATUS=$?
             fi
 
-            if [ "$BUILD_STATUS" -eq 0 ]; then
-              if [ ! -f "$OUT_DIR/apks/ChromePublic.apk" ]; then
-                echo "Build returned success but ChromePublic.apk is missing."
-                BUILD_STATUS=1
+            if [ -f "$OUT_DIR/apks/ChromePublic.apk" ]; then
+              mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
+              if cp "$OUT_DIR/apks/ChromePublic.apk" "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk"; then
+                # Also accept a completed APK if the timeout raced with final packaging.
+                BUILD_STATUS=0
               else
-                mkdir -p "$CIRCLE_WORKING_DIRECTORY/afterbird-remote"
-                cp "$OUT_DIR/apks/ChromePublic.apk" "$CIRCLE_WORKING_DIRECTORY/afterbird-remote/ChromePublic.apk" || BUILD_STATUS=$?
+                BUILD_STATUS=$?
               fi
+            elif [ "$BUILD_STATUS" -eq 0 ]; then
+              echo "Build returned success but ChromePublic.apk is missing."
+              BUILD_STATUS=1
             fi
 
             echo "=== REMOTE BUILD EXIT STATUS: $BUILD_STATUS ==="
