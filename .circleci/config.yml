@@ -390,7 +390,8 @@ jobs:
 
             # Validate only the requested target. Walking every transitive dependency
             # costs nearly six minutes and the actual build will validate the graph.
-            gn desc "$OUT_DIR" //chrome/android:chrome_public_apk type
+            TARGET="$(gn ls "$OUT_DIR" //chrome/android:chrome_public_apk)"
+            test "$TARGET" = "//chrome/android:chrome_public_apk"
 
             echo "=== APK TARGET VALIDATION PASSED ==="
             echo "=== DISK ==="
