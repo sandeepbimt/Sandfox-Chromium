@@ -359,32 +359,22 @@ jobs:
 
             # Earlier Siso logs showed long queues on action/4. Raise the generated
             # pool to eight; SISO_LIMITS=local=8 applies the same upper bound.
-            python3 - "$BUILD_NINJA" <<'PY'
-            import pathlib
-            import re
-            import sys
-
+            python3 -c '
+            import pathlib, re, sys
             path = pathlib.Path(sys.argv[1])
             text = path.read_text()
-            pattern = re.compile(r"(?m)^pool build_toolchain_action_pool\n[ \t]+depth = ([0-9]+)$")
+            pattern = re.compile(r"(?m)^pool build_toolchain_action_pool\\n[ \\t]+depth = ([0-9]+)$")
             matches = list(pattern.finditer(text))
             if len(matches) != 1:
-                raise SystemExit(
-                    f"Expected one build_toolchain_action_pool definition; found {len(matches)}"
-                )
-
+                raise SystemExit("Expected exactly one build_toolchain_action_pool definition; found " + str(len(matches)))
             current = int(matches[0].group(1))
             if current < 8:
-                text, changed = pattern.subn(
-                    "pool build_toolchain_action_pool\n  depth = 8", text, count=1
-                )
+                text, changed = pattern.subn("pool build_toolchain_action_pool\\n  depth = 8", text, count=1)
                 if changed != 1:
                     raise SystemExit("Failed to update build_toolchain_action_pool depth")
                 path.write_text(text)
-
-            print(f"build_toolchain_action_pool depth: {current} -> {max(current, 8)}")
-            PY
-
+            print("build_toolchain_action_pool depth:", current, "->", max(current, 8))
+            ' "$BUILD_NINJA"
             grep -A 1 '^pool build_toolchain_action_pool$' "$BUILD_NINJA"
 
       - run:
