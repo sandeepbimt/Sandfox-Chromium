@@ -249,23 +249,19 @@ jobs:
             stat -c '%y %n' "$SRC_DIR/build/config/compiler/compiler.gni"
 
       - run:
-          name: Generate release GN configuration
+          name: Prepare release GN arguments without touching checkpoint
           command: |
             set -eux
             export PATH="$HOME/depot_tools:$PATH"
             WORKDIR="$HOME/afterbird-chromium"
             SRC_DIR="$WORKDIR/src"
-            OUT_DIR="$SRC_DIR/out/afterbird_production"
+            ARGS_FILE="$CIRCLE_WORKING_DIRECTORY/sandfox-release-args.gn"
 
-            mkdir -p "$OUT_DIR"
-            cp "$HOME/afterbird-delta/.build/args/release.gn" "$OUT_DIR/args.gn"
-            printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$OUT_DIR/args.gn"
+            cp "$HOME/afterbird-delta/.build/args/release.gn" "$ARGS_FILE"
+            printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$ARGS_FILE"
 
-            cd "$SRC_DIR"
-            gn gen "$OUT_DIR"
-
-            echo "=== REMOTE GN ARGS ==="
-            grep -E '^(use_remoteexec|use_siso) = ' "$OUT_DIR/args.gn"
+            echo "=== REMOTE GN ARGS TO APPLY AFTER RESTORE ==="
+            grep -E '^(use_remoteexec|use_siso) = ' "$ARGS_FILE"
 
             echo "=== SISO CACHE CONFIG DIAGNOSTICS ==="
             SISO_CONFIG_DIR="$SRC_DIR/build/config/siso"
@@ -295,12 +291,14 @@ jobs:
             - sandfox-aerium-v1-{{ .Branch }}-
 
       - run:
-          name: Validate restored checkpoint identity
+          name: Validate restored checkpoint before GN generation
           command: |
             set -euo pipefail
+            export PATH="$HOME/depot_tools:$PATH"
             SRC_DIR="$HOME/afterbird-chromium/src"
             OUT_DIR="$SRC_DIR/out/afterbird_production"
             DELTA_DIR="$HOME/afterbird-delta"
+            ARGS_FILE="$CIRCLE_WORKING_DIRECTORY/sandfox-release-args.gn"
             MARKER="$OUT_DIR/.sandfox-checkpoint-identity"
 
             checkpoint_identity() {
@@ -317,27 +315,39 @@ jobs:
             }
 
             EXPECTED="$(checkpoint_identity)"
+            REGENERATE=0
             if [ -f "$MARKER" ]; then
               ACTUAL="$(cat "$MARKER")"
               if [ "$ACTUAL" != "$EXPECTED" ]; then
                 echo "Checkpoint identity mismatch; discarding stale output state."
-                rm -rf "$OUT_DIR"
-                mkdir -p "$OUT_DIR"
-                cp "$DELTA_DIR/.build/args/release.gn" "$OUT_DIR/args.gn"
-                printf '\nuse_remoteexec = true\nuse_siso = true\n' >> "$OUT_DIR/args.gn"
-                cd "$SRC_DIR"
-                gn gen "$OUT_DIR"
+                REGENERATE=1
+              elif [ ! -f "$OUT_DIR/args.gn" ] || ! cmp -s "$ARGS_FILE" "$OUT_DIR/args.gn"; then
+                echo "Restored args.gn does not match pinned release configuration; rebuilding GN state."
+                REGENERATE=1
+              elif [ ! -f "$OUT_DIR/build.ninja" ] || [ ! -f "$OUT_DIR/.siso_fs_state" ]; then
+                echo "Checkpoint is missing required Ninja/Siso state; rebuilding GN state."
+                REGENERATE=1
               else
-                echo "Checkpoint identity verified; retaining restored Siso/Ninja state."
+                echo "Checkpoint identity and GN arguments verified; preserving restored Ninja/Siso state."
               fi
             else
-              echo "No prior checkpoint marker; retaining newly generated GN output."
+              echo "No valid checkpoint marker; generating initial GN state after restore."
+              REGENERATE=1
             fi
-            printf '%s\n' "$EXPECTED" > "$MARKER"
+
+            if [ "$REGENERATE" -eq 1 ]; then
+              rm -rf "$OUT_DIR"
+              mkdir -p "$OUT_DIR"
+              cp "$ARGS_FILE" "$OUT_DIR/args.gn"
+              cd "$SRC_DIR"
+              gn gen "$OUT_DIR"
+              printf '%s\n' "$EXPECTED" > "$MARKER"
+            fi
+
             echo "checkpoint_identity=$EXPECTED"
             echo "=== Restored checkpoint state ==="
             du -sh "$OUT_DIR"
-            stat -c '%y %n' "$OUT_DIR/build.ninja" "$OUT_DIR/.siso_fs_state" 2>/dev/null || true
+            stat -c '%y %s %n' "$OUT_DIR/build.ninja" "$OUT_DIR/.siso_fs_state" "$OUT_DIR/.siso_deps" 2>/dev/null || true
 
       - run:
           name: Preflight Chromium Android dependency graph
