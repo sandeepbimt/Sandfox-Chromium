@@ -362,19 +362,23 @@ jobs:
             python3 -c '
             import pathlib, re, sys
             path = pathlib.Path(sys.argv[1])
-            text = path.read_text()
-            pattern = re.compile(r"(?m)^pool build_toolchain_action_pool\\n[ \\t]+depth = ([0-9]+)$")
-            matches = list(pattern.finditer(text))
+            lines = path.read_text().splitlines()
+            matches = [i for i, line in enumerate(lines) if line == "pool build_toolchain_action_pool"]
             if len(matches) != 1:
                 raise SystemExit("Expected exactly one build_toolchain_action_pool definition; found " + str(len(matches)))
-            current = int(matches[0].group(1))
+            i = matches[0]
+            if i + 1 >= len(lines):
+                raise SystemExit("Pool depth line missing")
+            match = re.fullmatch(r"[ \\t]*depth = ([0-9]+)", lines[i + 1])
+            if not match:
+                raise SystemExit("Pool depth line has unexpected format: " + lines[i + 1])
+            current = int(match.group(1))
             if current < 8:
-                text, changed = pattern.subn("pool build_toolchain_action_pool\\n  depth = 8", text, count=1)
-                if changed != 1:
-                    raise SystemExit("Failed to update build_toolchain_action_pool depth")
-                path.write_text(text)
+                lines[i + 1] = "  depth = 8"
+                path.write_text("\\n".join(lines) + "\\n")
             print("build_toolchain_action_pool depth:", current, "->", max(current, 8))
             ' "$BUILD_NINJA"
+
             grep -A 1 '^pool build_toolchain_action_pool$' "$BUILD_NINJA"
 
       - run:
