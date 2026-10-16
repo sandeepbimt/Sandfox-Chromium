@@ -130,6 +130,16 @@ jobs:
           command: |
             set -eux
             export DEBIAN_FRONTEND=noninteractive
+
+            # CircleCI's Ubuntu image may already provide google-chrome.list.
+            # Chromium's install-build-deps script configures google.list too;
+            # retaining both makes apt-get update fail on duplicate CNF targets.
+            # The Chrome browser repo is not required to install Chromium build deps.
+            if [ -f /etc/apt/sources.list.d/google-chrome.list ]; then
+              echo "Removing preinstalled duplicate Google Chrome APT source."
+              sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+            fi
+
             cd "$HOME/afterbird-chromium/src"
             ./build/install-build-deps.sh --no-chromeos-fonts
 
