@@ -1,0 +1,38 @@
+SANDFOX: enable the native Android bottom navigation bar.
+
+Use Chromium's existing bottom-bar implementation rather than building a custom
+navigation surface. Enable it by default, keep it visible on the New Tab Page,
+and retain Chromium's built-in device eligibility checks. Existing defaults put
+Home, New Tab, tab switcher, and app menu actions in the bottom bar. No branding
+resources or page-rendering code are changed.
+
+diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
+--- a/chrome/browser/flags/android/chrome_feature_list.cc
++++ b/chrome/browser/flags/android/chrome_feature_list.cc
+@@ -594,7 +594,7 @@
+ BASE_FEATURE(kAndroidAppRatingPrompt, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kAndroidAtomsLogging, base::FEATURE_DISABLED_BY_DEFAULT);
+-BASE_FEATURE(kAndroidBottomBar, base::FEATURE_DISABLED_BY_DEFAULT);
++BASE_FEATURE(kAndroidBottomBar, base::FEATURE_ENABLED_BY_DEFAULT);
+ BASE_FEATURE(kAndroidBricksNativePage, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kAndroidContextMenuDisabledMenuItems, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+diff --git a/chrome/browser/flags/android/java/src/org/chromium/chrome/browser/flags/ChromeFeatureList.java b/chrome/browser/flags/android/java/src/org/chromium/chrome/browser/flags/ChromeFeatureList.java
+--- a/chrome/browser/flags/android/java/src/org/chromium/chrome/browser/flags/ChromeFeatureList.java
++++ b/chrome/browser/flags/android/java/src/org/chromium/chrome/browser/flags/ChromeFeatureList.java
+@@ -789,7 +789,7 @@
+             newCachedFlag(ANDROID_AUTO_MINTED_TWA, false);
+     public static final CachedFlag sAndroidBottomBar =
+-            newCachedFlag(ANDROID_BOTTOM_BAR, false, /* defaultValueInTests= */ false);
++            newCachedFlag(ANDROID_BOTTOM_BAR, true, /* defaultValueInTests= */ true);
+     public static final CachedFlag sAndroidElegantTextHeight =
+             newCachedFlag(ANDROID_ELEGANT_TEXT_HEIGHT, true);
+ 
+@@ -1597,7 +1597,7 @@
+     public static final BooleanCachedFeatureParam sAndroidBottomBarAlwaysUseFilledGlicIcon =
+             newBooleanCachedFeatureParam(ANDROID_BOTTOM_BAR, "always_use_filled_glic_icon", false);
+     public static final BooleanCachedFeatureParam sAndroidBottomBarDisableOnNtp =
+-            newBooleanCachedFeatureParam(ANDROID_BOTTOM_BAR, "disable_on_ntp", true);
++            newBooleanCachedFeatureParam(ANDROID_BOTTOM_BAR, "disable_on_ntp", false);
+     public static final BooleanCachedFeatureParam sAndroidBottomBarKeepAppMenuInToolbar =
+             newBooleanCachedFeatureParam(ANDROID_BOTTOM_BAR, "keep_app_menu_in_toolbar", false);
