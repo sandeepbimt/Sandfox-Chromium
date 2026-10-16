@@ -1,0 +1,18 @@
+version: 2.1
+
+jobs:
+  config-guard:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - run:
+          name: Keep non-build branches from starting the Chromium build
+          command: echo "No APK build is configured for this branch."
+
+workflows:
+  config-guard:
+    jobs:
+      - config-guard:
+          filters:
+            branches:
+              only: sandfox/circleci-buildbuddy-c4
