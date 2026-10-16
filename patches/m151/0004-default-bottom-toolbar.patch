@@ -1,14 +1,19 @@
 SANDFOX: default fresh profiles to the bottom toolbar.
 
-Change only the preference defaults; keep the patch independent of nearby
-comments so harmless upstream comment changes do not break application.
+Use stable code context rather than nearby comments so the patch survives
+non-functional upstream comment changes while retaining normal git-apply
+context validation.
 
 diff --git a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java
 --- a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java
 +++ b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java
-@@ -54,1 +54,1 @@
+@@ -53,2 +53,2 @@
+     private static final @ToolbarPositionAndSource int DEFAULT_POSITION_AND_SOURCE =
 -            ToolbarPositionAndSource.TOP_SETTINGS;
 +            ToolbarPositionAndSource.BOTTOM_SETTINGS;
-@@ -259,1 +259,1 @@
+@@ -257,4 +257,4 @@
+     private static @ToolbarPositionAndSource int fromLocalState(boolean isInBottomPosition) {
+         if (isInBottomPosition) return ToolbarPositionAndSource.BOTTOM_SETTINGS;
 -        return DEFAULT_POSITION_AND_SOURCE;
 +        return ToolbarPositionAndSource.TOP_SETTINGS;
+     }
