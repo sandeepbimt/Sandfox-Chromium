@@ -1,0 +1,25 @@
+SANDFOX: default fresh profiles to the bottom toolbar.
+
+Reuse Chromium's existing toolbar-position preference. Preserve an explicit
+top choice when reconciling the local-state preference with the shared
+preference.
+
+diff --git a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java
+--- a/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java
++++ b/chrome/browser/ui/android/toolbar/java/src/org/chromium/chrome/browser/toolbar/settings/AddressBarPreference.java
+@@ -49,6 +49,6 @@
+     private @HighlightedOption int mHighlightedOption;
+ 
+-    // We choose this as a "default return value" because top omnibox is the default today. Choose
+-    // TOP_SETTINGS because TOP_LONG_PRESS causes an animation (see ToolbarPositionController).
++    // Default position when neither shared nor local-state preference is set. Use a SETTINGS
++    // source to avoid an animated transition when the toolbar is initialized at startup.
+     private static final @ToolbarPositionAndSource int DEFAULT_POSITION_AND_SOURCE =
+-            ToolbarPositionAndSource.TOP_SETTINGS;
++            ToolbarPositionAndSource.BOTTOM_SETTINGS;
+@@ -257,4 +257,4 @@
+     private static @ToolbarPositionAndSource int fromLocalState(boolean isInBottomPosition) {
+         if (isInBottomPosition) return ToolbarPositionAndSource.BOTTOM_SETTINGS;
+-        return DEFAULT_POSITION_AND_SOURCE;
++        return ToolbarPositionAndSource.TOP_SETTINGS;
+     }
