@@ -27,7 +27,6 @@ diff --git a/chrome/browser/flags/android/java/src/org/chromium/chrome/browser/f
 +            newCachedFlag(ANDROID_BOTTOM_BAR, true, /* defaultValueInTests= */ true);
      public static final CachedFlag sAndroidElegantTextHeight =
              newCachedFlag(ANDROID_ELEGANT_TEXT_HEIGHT, true);
-
 @@ -1597,6 +1597,6 @@
      public static final BooleanCachedFeatureParam sAndroidBottomBarAlwaysUseFilledGlicIcon =
              newBooleanCachedFeatureParam(ANDROID_BOTTOM_BAR, "always_use_filled_glic_icon", false);
