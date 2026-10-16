@@ -81,7 +81,21 @@ jobs:
             export PATH="$HOME/depot_tools:$PATH"
             export DEPOT_TOOLS_UPDATE=0
             cd "$HOME/afterbird-chromium"
-            gclient sync -D --no-history --nohooks
+
+            # Chromium's third-party Git hosts can temporarily return HTTP 503.
+            # Retry the sync as a whole so already completed dependencies are reused.
+            attempt=1
+            max_attempts=3
+            until gclient sync -D --no-history --nohooks; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Chromium dependency sync failed after $attempt attempts."
+                exit 1
+              fi
+              attempt=$((attempt + 1))
+              delay=$((attempt * 20))
+              echo "Chromium dependency sync failed; retrying attempt $attempt/$max_attempts in ${delay}s."
+              sleep "$delay"
+            done
 
       - run:
           name: Fetch pinned Afterbird delta
